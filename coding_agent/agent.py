@@ -1,5 +1,5 @@
 import json
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .config import Config
 from .llm_client import LLMError, LLMRequestError
@@ -18,13 +18,21 @@ class DemoModel:
 
 
 class Agent:
-    def __init__(self, config: Config, model: ModelClient | None = None):
+    def __init__(
+        self,
+        config: Config,
+        model: ModelClient | None = None,
+        event_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ):
         self.config = config
         self.registry = ToolRegistry(config)
         self.model = model or DemoModel()
         self.messages: list[dict[str, Any]] = []
         self.execution_log: list[dict[str, Any]] = []
         self.last_status = "idle"
+        self._event_callback = event_callback or (lambda _type, _data: None)
+        self._is_cancelled = is_cancelled or (lambda: False)
 
     def run(self, task: str) -> str:
         self.messages = [
@@ -33,12 +41,19 @@ class Agent:
         ]
         self.execution_log = []
         self.last_status = "running"
+        self._emit("task_started", {"task": task})
         for turn in range(1, self.config.max_turns + 1):
+            if self._is_cancelled():
+                self.last_status = "cancelled"
+                return "Agent task was cancelled."
+            self._emit("model_thinking", {"turn": turn})
             try:
                 response = self._complete_with_retry()
             except LLMError as exc:
                 self.last_status = "failed"
-                return self._failure_summary("model request", str(exc))
+                result = self._failure_summary("model request", str(exc))
+                self._emit("task_error", {"stage": "model request", "error": str(exc)})
+                return result
             assistant_message = {
                 "role": "assistant",
                 "content": response.get("content", ""),
@@ -49,11 +64,16 @@ class Agent:
             self.messages.append(assistant_message)
             if not calls:
                 self.last_status = "completed"
+                self._emit("assistant_message", {"content": assistant_message["content"]})
                 return assistant_message["content"]
             for index, call in enumerate(calls, start=1):
+                if self._is_cancelled():
+                    self.last_status = "cancelled"
+                    return "Agent task was cancelled."
                 call_id = call.get("id", f"turn-{turn}-call-{index}") if isinstance(call, dict) else f"turn-{turn}-call-{index}"
                 name = call.get("name", "") if isinstance(call, dict) else ""
                 arguments, error = self._parse_arguments(call.get("arguments") if isinstance(call, dict) else None)
+                self._emit("tool_started", {"turn": turn, "tool": name or "<invalid>", "arguments": self._argument_summary(arguments)})
                 result = {"ok": False, "error": error} if error else self.registry.execute(name, arguments)
                 self.execution_log.append(
                     {
@@ -65,9 +85,13 @@ class Agent:
                     }
                 )
                 self.messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+                self._emit("tool_finished", {"turn": turn, "tool": name or "<invalid>", "result": result})
         count = len(self.execution_log)
         self.last_status = "limit_reached"
         return f"Agent stopped after reaching the maximum turn limit ({self.config.max_turns}); executed {count} tool call(s)."
+
+    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
+        self._event_callback(event_type, data)
 
     def _complete_with_retry(self) -> dict[str, Any]:
         attempts = max(0, self.config.model_retries) + 1
