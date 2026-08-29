@@ -22,7 +22,7 @@ python -m coding_agent.tui --demo --workspace .
 
 ### 一次性配置真实模型
 
-将 [`.env.example`](.env.example) 复制为工作区根目录的 `.env`，填入自己的 Key；程序会自动读取它，且 `.env` 已被 Git 忽略。显式设置的系统环境变量优先于 `.env`，适合临时切换模型。
+将 [`.env.example`](.env.example) 复制为用户级配置文件 `~/.local-codex/.env`，填入自己的 Key；程序会自动读取它，且该文件不在项目中，不会进入 Git。显式设置的系统环境变量优先于配置文件，适合临时切换模型。
 
 ```dotenv
 LLM_API_KEY=你的真实密钥
@@ -35,6 +35,8 @@ LLM_BASE_URL=https://api.openai.com/v1
 ```powershell
 python -m coding_agent.tui --workspace .
 ```
+
+需要为某个项目单独覆盖模型或限额时，可在该项目根目录放置 `.env`；其优先级高于用户级配置。
 
 ### 任意目录启动
 

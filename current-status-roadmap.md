@@ -38,7 +38,7 @@ CLI / TUI / Web / tkinter GUI (legacy)
 
 - 使用 Python 标准库 `urllib` 实现 OpenAI 兼容 Chat Completions 客户端。
 - 支持 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY` 和请求超时配置。
-- 工作区根目录的 `.env` 会被自动读取；系统环境变量可覆盖其中的同名配置。
+- 用户级 `~/.local-codex/.env` 与工作区根目录的 `.env` 会被自动读取；工作区配置覆盖用户级配置，系统环境变量优先级最高。
 - 解析文本回复和原生 `tool_calls`。
 - 处理 HTTP 错误、网络错误、超时、空响应和非法 JSON。
 - 支持临时模型请求失败重试。

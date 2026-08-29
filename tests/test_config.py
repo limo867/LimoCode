@@ -34,6 +34,19 @@ class ConfigOverrideTests(unittest.TestCase):
         self.assertEqual(config.model, "process-model")
         self.assertEqual(config.model_timeout, 90)
 
+    def test_loads_user_dotenv_when_workspace_has_no_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            workspace = root / "workspace"
+            (home / ".local-codex").mkdir(parents=True)
+            workspace.mkdir()
+            (home / ".local-codex" / ".env").write_text("LLM_API_KEY=user-key\nLLM_MODEL=user-model\n", encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True), patch("coding_agent.config.Path.home", return_value=home):
+                config = Config.from_env(str(workspace))
+        self.assertEqual(config.api_key, "user-key")
+        self.assertEqual(config.model, "user-model")
+
 
 if __name__ == "__main__":
     unittest.main()

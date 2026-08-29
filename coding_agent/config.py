@@ -77,10 +77,15 @@ class Config:
     @classmethod
     def from_env(cls, workspace: str | None = None) -> "Config":
         initial_root = Path(workspace or os.getenv("AGENT_WORKSPACE", os.getcwd())).expanduser().resolve()
-        dotenv = _dotenv_values(initial_root / ".env")
+        try:
+            user_dotenv_path = Path.home() / ".local-codex" / ".env"
+        except RuntimeError:
+            user_dotenv_path = None
+        global_dotenv = _dotenv_values(user_dotenv_path) if user_dotenv_path else {}
+        workspace_dotenv = _dotenv_values(initial_root / ".env")
 
         def get(name: str, default: str | None = None) -> str | None:
-            return os.getenv(name, dotenv.get(name, default))
+            return os.getenv(name, workspace_dotenv.get(name, global_dotenv.get(name, default)))
 
         root = Path(workspace or get("AGENT_WORKSPACE", os.getcwd()) or os.getcwd()).expanduser().resolve()
         history_value = Path(get("AGENT_HISTORY_DB", ".coding-agent/tasks.sqlite3") or ".coding-agent/tasks.sqlite3").expanduser()
