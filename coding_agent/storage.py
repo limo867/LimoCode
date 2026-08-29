@@ -38,6 +38,13 @@ class TaskStore:
                 FOREIGN KEY(task_id) REFERENCES tasks(id)
             );
             CREATE INDEX IF NOT EXISTS events_task_sequence ON events(task_id, sequence);
+            CREATE TABLE IF NOT EXISTS sessions (
+                task_id TEXT PRIMARY KEY,
+                task_context TEXT NOT NULL,
+                messages TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id)
+            );
             """
         )
         self._connection.commit()
@@ -89,10 +96,36 @@ class TaskStore:
             row = self._connection.execute("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events WHERE task_id = ?", (task_id,)).fetchone()
         return int(row["sequence"])
 
+    def save_session(self, task_id: str, task_context: str, messages: list[dict[str, Any]], updated_at: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """INSERT INTO sessions(task_id, task_context, messages, updated_at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(task_id) DO UPDATE SET task_context=excluded.task_context,
+                   messages=excluded.messages, updated_at=excluded.updated_at""",
+                (task_id, task_context, json.dumps(messages, ensure_ascii=False, default=str), updated_at),
+            )
+            self._connection.commit()
+
+    def load_session(self, task_id: str) -> tuple[str, list[dict[str, Any]]] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT task_context, messages FROM sessions WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            messages = json.loads(row["messages"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(messages, list) or not all(isinstance(message, dict) for message in messages):
+            return None
+        return str(row["task_context"]), messages
+
     def delete_task(self, task_id: str) -> None:
         """Remove a pruned task together with its persisted public events."""
         with self._lock:
             self._connection.execute("DELETE FROM events WHERE task_id = ?", (task_id,))
+            self._connection.execute("DELETE FROM sessions WHERE task_id = ?", (task_id,))
             self._connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             self._connection.commit()
 

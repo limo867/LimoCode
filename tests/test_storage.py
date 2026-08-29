@@ -109,6 +109,34 @@ class StorageTests(unittest.TestCase):
             self.assertTrue(all(second.get_task(task_id).status == "completed" for task_id in task_ids))
             second.store.close()
 
+    def test_persisted_session_can_continue_after_service_restart(self):
+        requests = []
+
+        class NamedModel:
+            def __init__(self, name):
+                self.name = name
+
+            def complete(self, messages, tools):
+                requests.append((self.name, messages))
+                return {"content": f"response from {self.name}"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = Config(workspace=root, history_db=root / "state.sqlite3", model="first")
+            first_service = AgentService(config, model_factory=lambda active, _demo: NamedModel(active.model))
+            first = first_service.create_task("Inspect the project")
+            first.thread.join(timeout=3)
+            first_service.store.close()
+
+            resumed_config = config.with_overrides(model="second")
+            second_service = AgentService(resumed_config, model_factory=lambda active, _demo: NamedModel(active.model))
+            continued = second_service.create_task("Continue with verification", resume_from=first.id)
+            continued.thread.join(timeout=3)
+            self.assertEqual(continued.result, "response from second")
+            self.assertTrue(any(message.get("content") == "response from first" for message in requests[-1][1]))
+            self.assertTrue(any(message.get("content") == "Continue with verification" for message in requests[-1][1]))
+            second_service.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

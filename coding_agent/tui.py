@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import Config
 from .events import AgentEvent
+from .models import ModelManager
 from .service import AgentService, TaskRecord
 
 
@@ -19,6 +20,16 @@ HELP = """Commands:
   /config                       Show runtime configuration
   /config <name> <value>        Set model, workspace, api-timeout, max-turns,
                                 command-timeout, approval-timeout, request-gap, or demo
+  /model [name]                 Show or switch the model
+  /models                       List configured models
+  /skills                       List available skills
+  /skill <name|auto|reload>     Select a skill, return to automatic selection, or reload
+  /memory                       List project memory
+  /memory add <content>         Add durable project memory
+  /memory search <query>        Search relevant project memory
+  /memory delete <id>           Delete a memory item
+  /compact                      Compact the most recent task context
+  /continue <instruction>       Continue the most recent completed task
   /history                      Show recent tasks
   /open <task-id-prefix>        Replay a stored task event stream
   /clear                        Clear the terminal
@@ -44,6 +55,16 @@ def event_summary(event: AgentEvent) -> str:
         return "task started"
     if event.type == "model_thinking":
         return f"thinking (turn {data.get('turn', '?')})"
+    if event.type == "skills_loaded":
+        return f"skills loaded: {', '.join(data.get('skills', []))}"
+    if event.type == "memory_retrieved":
+        return f"retrieved {len(data.get('memory_ids', []))} project memories"
+    if event.type == "memory_saved":
+        return f"saved {len(data.get('memory_ids', []))} project memories"
+    if event.type == "context_compacted":
+        return f"context compacted: {data.get('before_tokens', '?')} -> {data.get('after_tokens', '?')} tokens"
+    if event.type == "task_resumed":
+        return "task context resumed"
     if event.type == "model_retrying":
         return f"retrying model request in {data.get('delay_ms', '?')} ms"
     if event.type == "model_rate_limited":
@@ -134,6 +155,9 @@ class TerminalApp:
         self.config = config
         self.demo = demo
         self.service = AgentService(config)
+        self.models = ModelManager(config)
+        self._selected_skills: tuple[str, ...] = ()
+        self._last_task_id: str | None = None
         self._use_colour = sys.stdout.isatty() and not os.getenv("NO_COLOR")
 
     def run(self) -> None:
@@ -168,6 +192,27 @@ class TerminalApp:
         if command == "config":
             self._config(arguments)
             return True
+        if command == "model":
+            self._model(arguments)
+            return True
+        if command == "models":
+            self._models()
+            return True
+        if command == "skills":
+            self._skills()
+            return True
+        if command == "skill":
+            self._skill(arguments)
+            return True
+        if command == "memory":
+            self._memory(arguments)
+            return True
+        if command == "compact":
+            self._compact(arguments)
+            return True
+        if command == "continue":
+            self._continue(arguments)
+            return True
         if command == "history":
             self._history()
             return True
@@ -181,8 +226,9 @@ class TerminalApp:
         self._write(f"unknown command: /{command}. Type /help.", "red")
         return True
 
-    def _run_task(self, task: str) -> None:
-        record = self.service.create_task(task, demo=self.demo)
+    def _run_task(self, task: str, resume_from: str | None = None) -> None:
+        record = self.service.create_task(task, demo=self.demo, resume_from=resume_from)
+        self._last_task_id = record.id
         self._write(f"\n[{record.id[:8]}] {task}", "bold")
         self._stream(record)
 
@@ -245,9 +291,113 @@ class TerminalApp:
             return
         if len(arguments) < 2:
             raise ValueError("usage: /config <name> <value>")
+        if arguments[0].lower().replace("_", "-") == "model":
+            self._model(arguments[1:])
+            return
         self.config, self.demo = apply_config_change(self.config, self.demo, arguments[0], " ".join(arguments[1:]))
-        self.service = AgentService(self.config)
+        self._rebuild_service()
         self._write(f"updated {arguments[0]}", "green")
+
+    def _model(self, arguments: list[str]) -> None:
+        if not arguments:
+            current = self.models.current()
+            self._write("current model", "bold")
+            print(f"  provider  {current.provider}\n  model     {current.name}\n  context   {current.context_window} tokens")
+            return
+        self.config = self.models.switch(" ".join(arguments))
+        self.service.update_config(self.config)
+        self.models = ModelManager(self.config)
+        self._write(f"model switched to {self.config.model}", "green")
+
+    def _models(self) -> None:
+        self._write("available models", "bold")
+        for model in self.models.available():
+            marker = "*" if model.name == self.config.model else " "
+            print(f" {marker} {model.name}  ({model.provider}, {model.context_window} tokens)")
+
+    def _skills(self) -> None:
+        skills = self.service.skill_manager.metadata()
+        if not skills:
+            self._write("no skills found")
+            return
+        self._write("available skills", "bold")
+        for skill in skills:
+            marker = "*" if skill.name in self._selected_skills else " "
+            print(f" {marker} {skill.name:<14} {skill.description}")
+
+    def _skill(self, arguments: list[str]) -> None:
+        if len(arguments) != 1:
+            raise ValueError("usage: /skill <name|auto|reload>")
+        name = arguments[0]
+        if name == "reload":
+            self.service.reload_skills()
+            self._write("skills reloaded", "green")
+            return
+        if name == "auto":
+            self._selected_skills = ()
+            self.service.set_selected_skills(())
+            self._write("automatic skill selection enabled", "green")
+            return
+        self.service.set_selected_skills((name,))
+        self._selected_skills = (name,)
+        self._write(f"skill selected: {name}", "green")
+
+    def _rebuild_service(self) -> None:
+        self.service = AgentService(self.config)
+        self.models = ModelManager(self.config)
+        self.service.set_selected_skills(self._selected_skills)
+
+    def _memory(self, arguments: list[str]) -> None:
+        if not arguments:
+            items = self.service.list_memories()
+            self._show_memories(items)
+            return
+        action = arguments[0].lower()
+        if action == "add" and len(arguments) > 1:
+            item = self.service.add_memory(" ".join(arguments[1:]))
+            self._write(f"memory saved: {item.id}", "green")
+            return
+        if action == "search" and len(arguments) > 1:
+            self._show_memories(self.service.search_memories(" ".join(arguments[1:])))
+            return
+        if action == "delete" and len(arguments) == 2:
+            try:
+                item_id = int(arguments[1])
+            except ValueError as exc:
+                raise ValueError("memory id must be an integer") from exc
+            if not self.service.delete_memory(item_id):
+                raise ValueError("memory does not exist")
+            self._write(f"memory deleted: {item_id}", "green")
+            return
+        raise ValueError("usage: /memory [add <content>|search <query>|delete <id>]")
+
+    def _show_memories(self, items: list[Any]) -> None:
+        if not items:
+            self._write("no project memory")
+            return
+        self._write("project memory", "bold")
+        for item in items:
+            print(f"  {item.id:<4} {textwrap.shorten(item.content, width=76, placeholder='...')}")
+
+    def _compact(self, arguments: list[str]) -> None:
+        if arguments:
+            raise ValueError("usage: /compact")
+        if not self._last_task_id:
+            raise ValueError("no task context is available")
+        result = self.service.compact_task(self._last_task_id)
+        if not result:
+            raise ValueError("task context is unavailable")
+        if result.compacted:
+            self._write(f"context compacted: {result.before_tokens} -> {result.after_tokens} tokens", "green")
+        else:
+            self._write("context is already compact", "green")
+
+    def _continue(self, arguments: list[str]) -> None:
+        if not arguments:
+            raise ValueError("usage: /continue <instruction>")
+        if not self._last_task_id:
+            raise ValueError("no completed task context is available")
+        self._run_task(" ".join(arguments), resume_from=self._last_task_id)
 
     def _history(self) -> None:
         tasks = self.service.list_tasks(limit=12)
@@ -267,6 +417,7 @@ class TerminalApp:
         if len(matches) != 1:
             raise ValueError("task prefix must match exactly one task")
         record = self.service.get_task(matches[0]["id"])
+        self._last_task_id = record.id
         self._write(f"\n[{record.id[:8]}] {record.task}", "bold")
         for event in self.service.events(record.id):
             self._write(f"  {event_summary(event)}")

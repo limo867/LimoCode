@@ -10,8 +10,11 @@ import uuid
 
 from .agent import Agent, DemoModel, ModelClient, ModelRequestLimiter
 from .config import Config
+from .context import CompactionResult
 from .events import AgentEvent
 from .llm_client import OpenAICompatibleClient
+from .memory import MemoryStore
+from .skills import SkillManager
 from .storage import TaskStore
 
 
@@ -39,6 +42,7 @@ class TaskRecord:
     thread: Thread | None = field(default=None, repr=False)
     next_sequence: int = field(default=1, repr=False)
     pending_approval: ApprovalRequest | None = field(default=None, repr=False)
+    agent: Agent | None = field(default=None, repr=False)
 
     def transition(self, new_status: str) -> None:
         allowed = {
@@ -72,13 +76,16 @@ class TaskRecord:
 class AgentService:
     """Creates, runs, observes, and cancels local Agent tasks."""
 
-    def __init__(self, config: Config, model_factory: ModelFactory | None = None):
+    def __init__(self, config: Config, model_factory: ModelFactory | None = None, skill_manager: SkillManager | None = None):
         self.config = config
         self.model_factory = model_factory or self._default_model_factory
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = Lock()
         self.max_tasks = 100
         self._request_limiter = ModelRequestLimiter(config.model_min_request_interval_ms)
+        self.skill_manager = skill_manager or SkillManager(SkillManager.default_roots(config.workspace))
+        self.selected_skills: tuple[str, ...] = ()
+        self.memory_store = MemoryStore(config.memory_db)
         self.store = TaskStore(config.history_db) if config.history_db else None
         if self.store:
             for snapshot in self.store.load_tasks():
@@ -95,20 +102,35 @@ class AgentService:
     def _default_model_factory(config: Config, demo: bool) -> ModelClient:
         return DemoModel() if demo else OpenAICompatibleClient(config)
 
-    def create_task(self, task: str, *, demo: bool | None = None) -> TaskRecord:
+    def create_task(self, task: str, *, demo: bool | None = None, resume_from: str | None = None) -> TaskRecord:
         if not isinstance(task, str) or not task.strip():
             raise ValueError("task must be a non-empty string")
         if demo is None:
             demo = bool(getattr(self, "demo_default", False))
+        parent: TaskRecord | None = None
+        if resume_from:
+            parent = self.get_task(resume_from)
+            persisted_session = self.store.load_session(resume_from) if self.store else None
+            if not parent or parent.status != "completed" or (not parent.agent and not persisted_session):
+                raise ValueError("completed task context is unavailable for continuation")
         record = TaskRecord(id=uuid.uuid4().hex, task=task.strip())
         with self._lock:
             self._tasks[record.id] = record
             if self.store:
                 self.store.save_task(record.snapshot())
             self._trim_tasks_locked(exclude_id=record.id)
-        record.thread = Thread(target=self._run, args=(record, demo), name=f"agent-{record.id[:8]}", daemon=True)
+        record.thread = Thread(target=self._run, args=(record, demo, parent), name=f"agent-{record.id[:8]}", daemon=True)
         record.thread.start()
         return record
+
+    def update_config(self, config: Config) -> None:
+        with self._lock:
+            if any(record.status in {"queued", "running"} for record in self._tasks.values()):
+                raise ValueError("cannot change runtime configuration while a task is active")
+            if config.workspace != self.config.workspace:
+                raise ValueError("workspace changes require a new service")
+            self.config = config
+            self._request_limiter = ModelRequestLimiter(config.model_min_request_interval_ms)
 
     def get_task(self, task_id: str) -> TaskRecord | None:
         with self._lock:
@@ -148,7 +170,33 @@ class AgentService:
             request.resolved.set()
             return True
 
-    def _run(self, record: TaskRecord, demo: bool) -> None:
+    def set_selected_skills(self, names: tuple[str, ...]) -> None:
+        for name in names:
+            self.skill_manager.load(name)
+        self.selected_skills = names
+
+    def reload_skills(self) -> None:
+        self.skill_manager.reload()
+        available = {skill.name for skill in self.skill_manager.metadata()}
+        self.selected_skills = tuple(name for name in self.selected_skills if name in available)
+
+    def list_memories(self, limit: int = 50):
+        return self.memory_store.list(limit)
+
+    def add_memory(self, content: str):
+        return self.memory_store.add(content)
+
+    def search_memories(self, query: str, limit: int = 8):
+        return self.memory_store.search(query, limit)
+
+    def delete_memory(self, item_id: int) -> bool:
+        return self.memory_store.delete(item_id)
+
+    def compact_task(self, task_id: str) -> CompactionResult | None:
+        record = self.get_task(task_id)
+        return record.agent.compact_context(force=True) if record and record.agent else None
+
+    def _run(self, record: TaskRecord, demo: bool, parent: TaskRecord | None = None) -> None:
         def emit(event_type: str, data: dict[str, Any]) -> None:
             self._emit(record, event_type, data)
 
@@ -160,15 +208,43 @@ class AgentService:
                     self.store.save_task(record.snapshot())
                 self._trim_tasks_locked()
             model = self.model_factory(self.config, demo)
-            agent = Agent(
-                self.config,
-                model=model,
-                event_callback=emit,
-                is_cancelled=record.cancelled.is_set,
-                request_limiter=self._request_limiter,
-                command_approval=lambda command, cancelled: self._request_command_approval(record, command, cancelled),
-            )
-            record.result = agent.run(record.task)
+            approval = lambda command, cancelled: self._request_command_approval(record, command, cancelled)
+
+            def new_agent() -> Agent:
+                return Agent(
+                    self.config,
+                    model=model,
+                    event_callback=emit,
+                    is_cancelled=record.cancelled.is_set,
+                    request_limiter=self._request_limiter,
+                    command_approval=approval,
+                    skill_manager=self.skill_manager,
+                    selected_skills=self.selected_skills,
+                    memory_store=self.memory_store,
+                )
+
+            if parent and parent.agent:
+                agent = parent.agent
+            else:
+                agent = new_agent()
+                if parent:
+                    session = self.store.load_session(parent.id) if self.store else None
+                    if not session:
+                        raise ValueError("persisted task context is unavailable")
+                    agent.restore_session(*session)
+            record.agent = agent
+            if parent:
+                record.result = agent.continue_task(
+                    record.task,
+                    config=self.config,
+                    model=model,
+                    event_callback=emit,
+                    is_cancelled=record.cancelled.is_set,
+                    request_limiter=self._request_limiter,
+                    command_approval=approval,
+                )
+            else:
+                record.result = agent.run(record.task)
             if record.cancelled.is_set() or agent.last_status == "cancelled":
                 with self._lock:
                     record.transition("cancelled")
@@ -203,6 +279,9 @@ class AgentService:
             record.events.append(event)
             if self.store:
                 self.store.save_event(event)
+                if record.agent:
+                    task_context, messages = record.agent.session_state()
+                    self.store.save_session(record.id, task_context, messages, event.timestamp)
 
     def _request_command_approval(
         self,

@@ -109,3 +109,29 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(record.status, "completed")
         finished = [event for event in service.events(record.id) if event.type == "tool_finished"]
         self.assertEqual(finished[0].data["result"]["approval_status"], "rejected")
+
+    def test_model_switch_can_continue_completed_task_context(self):
+        requests = []
+
+        class NamedModel:
+            def __init__(self, name):
+                self.name = name
+
+            def complete(self, messages, tools):
+                requests.append((self.name, messages))
+                return {"content": f"response from {self.name}"}
+
+        service = AgentService(
+            Config(workspace=self.config.workspace, model="first"),
+            model_factory=lambda config, _demo: NamedModel(config.model),
+        )
+        first = service.create_task("Inspect the project")
+        first.thread.join(timeout=3)
+        service.update_config(service.config.with_overrides(model="second"))
+        continued = service.create_task("Now verify the tests", resume_from=first.id)
+        continued.thread.join(timeout=3)
+        self.assertEqual(continued.result, "response from second")
+        self.assertEqual([name for name, _ in requests], ["first", "second"])
+        previous_context = requests[1][1]
+        self.assertTrue(any(message.get("content") == "response from first" for message in previous_context))
+        self.assertTrue(any(message.get("content") == "Now verify the tests" for message in previous_context))

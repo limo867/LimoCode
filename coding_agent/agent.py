@@ -4,7 +4,10 @@ from threading import Lock
 from typing import Any, Callable, Protocol
 
 from .config import Config
+from .context import CompactionResult, ContextManager
 from .llm_client import LLMError, LLMRequestError
+from .memory import MemoryStore
+from .skills import SkillManager
 from .tools import ToolRegistry
 
 
@@ -81,6 +84,10 @@ class Agent:
         sleeper: Callable[[float], None] | None = None,
         request_limiter: ModelRequestLimiter | None = None,
         command_approval: Callable[[str, Callable[[], bool]], str] | None = None,
+        skill_manager: SkillManager | None = None,
+        selected_skills: tuple[str, ...] = (),
+        memory_store: MemoryStore | None = None,
+        context_manager: ContextManager | None = None,
     ):
         self.config = config
         self.registry = ToolRegistry(config)
@@ -93,15 +100,71 @@ class Agent:
         self._sleeper = sleeper or time.sleep
         self._request_limiter = request_limiter or ModelRequestLimiter(config.model_min_request_interval_ms)
         self._command_approval = command_approval
+        self._skill_manager = skill_manager
+        self._selected_skills = selected_skills
+        self._memory_store = memory_store
+        self._context_manager = context_manager or ContextManager(config)
+        self._task = ""
 
     def run(self, task: str) -> str:
-        self.messages = [
-            {"role": "system", "content": "You are a coding agent. Use local tools to complete the user's task."},
-            {"role": "user", "content": task},
-        ]
+        self._task = task
+        instructions = "You are a coding agent. Use local tools to complete the user's task."
+        if self._memory_store:
+            memories = self._memory_store.retrieve(task)
+            if memories:
+                instructions += "\n\nRelevant project memory:\n" + "\n".join(f"- {item.content}" for item in memories)
+                self._emit("memory_retrieved", {"memory_ids": [item.id for item in memories]})
+        if self._skill_manager:
+            active_skills = self._skill_manager.select(task, self._selected_skills)
+            if active_skills:
+                instructions += "\n\nActive skills:\n" + "\n\n".join(
+                    f"## {skill.name}\n{skill.instructions}" for skill in active_skills
+                )
+                self._emit("skills_loaded", {"skills": [skill.name for skill in active_skills], "automatic": not self._selected_skills})
+        self.messages = [{"role": "system", "content": instructions}, {"role": "user", "content": task}]
         self.execution_log = []
         self.last_status = "running"
         self._emit("task_started", {"task": task})
+        return self._run_loop()
+
+    def continue_task(
+        self,
+        follow_up: str,
+        *,
+        config: Config,
+        model: ModelClient,
+        event_callback: Callable[[str, dict[str, Any]], None],
+        is_cancelled: Callable[[], bool],
+        request_limiter: ModelRequestLimiter,
+        command_approval: Callable[[str, Callable[[], bool]], str] | None,
+    ) -> str:
+        """Continue a finished task with the existing conversation on a new model."""
+        if not self.messages:
+            return self.run(follow_up)
+        self.config = config
+        self.model = model
+        self._event_callback = event_callback
+        self._is_cancelled = is_cancelled
+        self._request_limiter = request_limiter
+        self._command_approval = command_approval
+        self._context_manager = ContextManager(config)
+        self.messages.append({"role": "user", "content": follow_up})
+        self._task = f"{self._task}\n\nFollow-up: {follow_up}"
+        self.last_status = "running"
+        self._emit("task_resumed", {"task": follow_up})
+        return self._run_loop()
+
+    def restore_session(self, task_context: str, messages: list[dict[str, Any]]) -> None:
+        if not task_context or len(messages) < 2:
+            raise ValueError("session state is incomplete")
+        self._task = task_context
+        self.messages = messages
+        self.last_status = "completed"
+
+    def session_state(self) -> tuple[str, list[dict[str, Any]]]:
+        return self._task, self.messages
+
+    def _run_loop(self) -> str:
         for turn in range(1, self.config.max_turns + 1):
             if self._is_cancelled():
                 self.last_status = "cancelled"
@@ -128,6 +191,10 @@ class Agent:
             if not calls:
                 self.last_status = "completed"
                 self._emit("assistant_message", {"content": assistant_message["content"]})
+                if self._memory_store:
+                    saved = self._memory_store.extract_from_task(self._task)
+                    if saved:
+                        self._emit("memory_saved", {"memory_ids": [item.id for item in saved], "source": "automatic"})
                 return assistant_message["content"]
             for index, call in enumerate(calls, start=1):
                 if self._is_cancelled():
@@ -166,6 +233,7 @@ class Agent:
         self._event_callback(event_type, data)
 
     def _complete_with_retry(self) -> dict[str, Any]:
+        self.compact_context()
         attempts = max(0, self.config.model_retries) + 1
         for attempt in range(attempts):
             try:
@@ -182,23 +250,17 @@ class Agent:
         raise RuntimeError("unreachable")
 
     def _context_messages(self) -> list[dict[str, Any]]:
-        """Keep instructions and the newest interactions within bounded context."""
-        if len(self.messages) <= 2:
-            return list(self.messages)
-        head = self.messages[:2]
-        recent = self.messages[2:]
-        limit = max(1, self.config.max_history_messages)
-        omitted = len(recent) > limit
-        recent = recent[-limit:]
-        if omitted:
-            head = [
-                head[0],
-                {
-                    "role": "user",
-                    "content": f"{head[1]['content']}\n\nEarlier tool interactions were omitted to keep the context bounded.",
-                },
-            ]
-        return [self._truncate_message(message) for message in head + recent]
+        return [self._truncate_message(message) for message in self.messages]
+
+    def compact_context(self, force: bool = False) -> CompactionResult:
+        result = self._context_manager.compact(self.messages, self._task, force=force)
+        if result.compacted:
+            self.messages = result.messages
+            self._emit(
+                "context_compacted",
+                {"before_tokens": result.before_tokens, "after_tokens": result.after_tokens, "manual": force},
+            )
+        return result
 
     def _truncate_message(self, message: dict[str, Any]) -> dict[str, Any]:
         result = dict(message)

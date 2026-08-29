@@ -48,7 +48,11 @@ class Config:
     max_file_chars: int = 200000
     max_history_messages: int = 30
     max_history_chars: int = 8000
+    max_context_tokens: int = 128000
+    compaction_threshold: float = 0.8
+    available_models: tuple[str, ...] = ()
     history_db: Path | None = None
+    memory_db: Path | None = None
     approved_commands: frozenset[str] = frozenset()
 
     def with_overrides(
@@ -90,6 +94,8 @@ class Config:
         root = Path(workspace or get("AGENT_WORKSPACE", os.getcwd()) or os.getcwd()).expanduser().resolve()
         history_value = Path(get("AGENT_HISTORY_DB", ".coding-agent/tasks.sqlite3") or ".coding-agent/tasks.sqlite3").expanduser()
         history_db = (root / history_value).resolve() if not history_value.is_absolute() else history_value.resolve()
+        memory_value = Path(get("AGENT_MEMORY_DB", ".coding-agent/memory.sqlite3") or ".coding-agent/memory.sqlite3").expanduser()
+        memory_db = (root / memory_value).resolve() if not memory_value.is_absolute() else memory_value.resolve()
         return cls(
             workspace=root,
             model=get("LLM_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
@@ -106,6 +112,10 @@ class Config:
             max_file_chars=int(get("AGENT_MAX_FILE_CHARS", "200000") or "200000"),
             max_history_messages=int(get("AGENT_MAX_HISTORY_MESSAGES", "30") or "30"),
             max_history_chars=int(get("AGENT_MAX_HISTORY_CHARS", "8000") or "8000"),
+            max_context_tokens=int(get("AGENT_MAX_CONTEXT_TOKENS", "128000") or "128000"),
+            compaction_threshold=float(get("AGENT_COMPACTION_THRESHOLD", "0.8") or "0.8"),
+            available_models=tuple(item.strip() for item in (get("LLM_MODELS", "") or "").split(",") if item.strip()),
             history_db=history_db,
+            memory_db=memory_db,
             approved_commands=frozenset(item.strip() for item in (get("AGENT_APPROVED_COMMANDS", "") or "").split(";;") if item.strip()),
         )

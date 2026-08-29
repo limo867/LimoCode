@@ -13,3 +13,6 @@ local-codex = "coding_agent.tui:main"
 
 [tool.setuptools]
 packages = ["coding_agent"]
+
+[tool.setuptools.package-data]
+coding_agent = ["default_skills/*/SKILL.md"]

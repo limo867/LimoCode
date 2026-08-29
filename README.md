@@ -15,10 +15,33 @@ python main.py --demo "列出项目文件"
 本地交互使用终端优先的 Codex 风格 TUI：任务过程以连续事件流显示，可查看历史任务、调整运行配置，并在高风险命令出现时进行本地确认。
 
 ```powershell
-python -m coding_agent.tui --demo --workspace .
+python -m coding_agent.tui --workspace .
 ```
 
 启动后直接输入编程任务；输入 `/help` 查看命令。常用命令为：`/config` 查看或调整运行配置、`/history` 查看最近任务、`/open <任务 ID 前缀>` 重放历史事件、`/clear` 清屏，以及 `/quit` 退出。真实模型模式下，先配置 `LLM_API_KEY`，再省略 `--demo` 启动。
+
+### 长任务能力
+
+以下命令会参与 Agent 的实际运行上下文，而不是仅展示状态：
+
+- `/model`、`/models`、`/model <name>`：查看、列出和切换模型。通过 `LLM_MODELS` 配置可切换列表；切换后使用 `/continue <指令>` 可保留上一任务的消息、工具结果与摘要继续执行。会话消息保存于任务 SQLite 数据库，重启后先用 `/open <任务 ID 前缀>` 选中任务即可继续。
+- `/skills`、`/skill <name>`、`/skill auto`、`/skill reload`：发现、手动选择、恢复自动选择与重新加载 Markdown Skill。Skill 从工作区 `skills/<name>/SKILL.md`、用户目录 `~/.local-codex/skills/` 和内置 Skill 中发现，工作区内容优先。
+- `/memory`、`/memory add <内容>`、`/memory search <查询>`、`/memory delete <id>`：管理项目长期记忆。默认保存至工作区 `.coding-agent/memory.sqlite3`，每次任务只检索相关条目注入上下文。
+- `/compact`：手动压缩最近任务上下文。自动压缩会在 `AGENT_MAX_CONTEXT_TOKENS * AGENT_COMPACTION_THRESHOLD` 达到阈值时触发，并保留任务、进度、状态、决策、错误、文件与下一步。
+
+Skill 文件示例：
+
+```markdown
+---
+name: debugging
+description: Reproduce, diagnose, and fix software failures.
+---
+
+# Workflow
+1. Reproduce the issue.
+2. Read the exact error.
+3. Add or run a regression test after the fix.
+```
 
 ### 一次性配置真实模型
 
@@ -28,6 +51,9 @@ python -m coding_agent.tui --demo --workspace .
 LLM_API_KEY=你的真实密钥
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODELS=gpt-4o-mini,gpt-4.1-mini
+AGENT_MAX_CONTEXT_TOKENS=128000
+AGENT_COMPACTION_THRESHOLD=0.8
 ```
 
 之后每次直接运行即可：
