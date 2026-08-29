@@ -30,6 +30,18 @@ class TaskRecord:
     thread: Thread | None = field(default=None, repr=False)
     next_sequence: int = field(default=1, repr=False)
 
+    def transition(self, new_status: str) -> None:
+        allowed = {
+            "queued": {"running", "failed", "cancelled"},
+            "running": {"completed", "failed", "cancelled"},
+            "completed": set(),
+            "failed": set(),
+            "cancelled": set(),
+        }
+        if new_status not in allowed.get(self.status, set()):
+            raise ValueError(f"invalid task status transition: {self.status} -> {new_status}")
+        self.status = new_status
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -58,7 +70,7 @@ class AgentService:
                 record.events.extend(self.store.load_events(record.id))
                 record.next_sequence = (record.events[-1].sequence + 1) if record.events else 1
                 if record.status in {"queued", "running"}:
-                    record.status = "failed"
+                    record.transition("failed")
                     record.error = "task interrupted because the service restarted"
                     self.store.save_task(record.snapshot())
                 self._tasks[record.id] = record
@@ -113,26 +125,32 @@ class AgentService:
             self._emit(record, event_type, data)
 
         try:
-            record.status = "running"
+            with self._lock:
+                record.transition("running")
             if self.store:
                 self.store.save_task(record.snapshot())
             model = self.model_factory(self.config, demo)
             agent = Agent(self.config, model=model, event_callback=emit, is_cancelled=record.cancelled.is_set)
             record.result = agent.run(record.task)
             if record.cancelled.is_set() or agent.last_status == "cancelled":
-                record.status = "cancelled"
+                with self._lock:
+                    record.transition("cancelled")
                 self._emit(record, "task_cancelled", {"result": record.result})
             elif agent.last_status == "failed":
-                record.status = "failed"
+                with self._lock:
+                    record.transition("failed")
                 record.error = record.result
                 self._emit(record, "task_error", {"error": record.error})
             else:
-                record.status = "completed"
+                with self._lock:
+                    record.transition("completed")
                 self._emit(record, "task_finished", {"result": record.result, "status": agent.last_status})
             if self.store:
                 self.store.save_task(record.snapshot())
         except Exception as exc:
-            record.status = "failed"
+            with self._lock:
+                if record.status in {"queued", "running"}:
+                    record.transition("failed")
             record.error = str(exc)
             self._emit(record, "task_error", {"error": record.error})
             if self.store:

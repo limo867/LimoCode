@@ -28,26 +28,34 @@ class AgentWindow:
         tk.Label(controls, text="Task").grid(row=0, column=0, sticky="w")
         self.task = tk.Entry(controls)
         self.task.grid(row=0, column=1, columnspan=5, sticky="ew", padx=(8, 0))
-        tk.Label(controls, text="Workspace").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        tk.Label(controls, text="Model").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.model = tk.StringVar(value=config.model)
+        tk.Entry(controls, textvariable=self.model).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="API timeout (s)").grid(row=1, column=2, sticky="e", pady=(8, 0))
+        self.model_timeout = tk.Spinbox(controls, from_=1, to=600, width=7)
+        self.model_timeout.delete(0, tk.END)
+        self.model_timeout.insert(0, str(config.model_timeout))
+        self.model_timeout.grid(row=1, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Workspace").grid(row=2, column=0, sticky="w", pady=(8, 0))
         self.workspace = tk.StringVar(value=str(config.workspace))
-        tk.Entry(controls, textvariable=self.workspace).grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 4), pady=(8, 0))
-        tk.Button(controls, text="Browse", command=self.choose_workspace).grid(row=1, column=4, pady=(8, 0))
+        tk.Entry(controls, textvariable=self.workspace).grid(row=2, column=1, columnspan=3, sticky="ew", padx=(8, 4), pady=(8, 0))
+        tk.Button(controls, text="Browse", command=self.choose_workspace).grid(row=2, column=4, pady=(8, 0))
         self.demo_var = tk.BooleanVar(value=demo)
-        tk.Checkbutton(controls, text="Offline demo", variable=self.demo_var).grid(row=1, column=5, padx=(8, 0), pady=(8, 0))
-        tk.Label(controls, text="Max turns").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        tk.Checkbutton(controls, text="Offline demo", variable=self.demo_var).grid(row=2, column=5, padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Max turns").grid(row=3, column=0, sticky="w", pady=(8, 0))
         self.max_turns = tk.Spinbox(controls, from_=1, to=100, width=7)
         self.max_turns.delete(0, tk.END)
         self.max_turns.insert(0, str(config.max_turns))
-        self.max_turns.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
-        tk.Label(controls, text="Command timeout (s)").grid(row=2, column=2, sticky="e", pady=(8, 0))
+        self.max_turns.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Command timeout (s)").grid(row=3, column=2, sticky="e", pady=(8, 0))
         self.timeout = tk.Spinbox(controls, from_=1, to=600, width=7)
         self.timeout.delete(0, tk.END)
         self.timeout.insert(0, str(config.command_timeout))
-        self.timeout.grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        self.timeout.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
         self.start_button = tk.Button(controls, text="Start", command=self.start)
-        self.start_button.grid(row=2, column=4, pady=(8, 0))
+        self.start_button.grid(row=3, column=4, pady=(8, 0))
         self.stop_button = tk.Button(controls, text="Stop", command=self.stop, state=tk.DISABLED)
-        self.stop_button.grid(row=2, column=5, padx=(8, 0), pady=(8, 0))
+        self.stop_button.grid(row=3, column=5, padx=(8, 0), pady=(8, 0))
         controls.columnconfigure(1, weight=1)
         controls.columnconfigure(3, weight=1)
 
@@ -69,7 +77,14 @@ class AgentWindow:
 
     def _updated_config(self) -> Config:
         workspace = Path(self.workspace.get()).expanduser().resolve()
-        return replace(self.config, workspace=workspace, max_turns=int(self.max_turns.get()), command_timeout=int(self.timeout.get()))
+        return replace(
+            self.config,
+            workspace=workspace,
+            model=self.model.get().strip() or self.config.model,
+            model_timeout=int(self.model_timeout.get()),
+            max_turns=int(self.max_turns.get()),
+            command_timeout=int(self.timeout.get()),
+        )
 
     def choose_workspace(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.workspace.get())

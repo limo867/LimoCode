@@ -43,3 +43,11 @@ class ServiceTests(unittest.TestCase):
         events = service.events(record.id)
         self.assertGreaterEqual(len(events), 2)
         self.assertEqual(service.events(record.id, after=2)[0].sequence, 3)
+
+    def test_task_status_transitions_are_explicit(self):
+        service = AgentService(self.config)
+        record = service.create_task("demo", demo=True)
+        record.thread.join(timeout=3)
+        self.assertEqual(record.status, "completed")
+        with self.assertRaises(ValueError):
+            record.transition("running")

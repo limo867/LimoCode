@@ -58,11 +58,15 @@ python main.py --workspace . "检查并修复测试"
 python web_server.py --demo --workspace .
 ```
 
+`web_server.py` supports `--workspace`, `--model`, `--max-turns`, and `--timeout`. The selected workspace applies to every browser task served by that local process.
+
 启动桌面 GUI（需要系统提供 tkinter）：
 
 ```powershell
 python -m coding_agent.gui --demo --workspace .
 ```
+
+The desktop GUI exposes the same workspace, model, API timeout, turn limit, and command timeout settings before a task starts.
 
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
 
