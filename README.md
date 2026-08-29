@@ -70,6 +70,15 @@ python -m coding_agent.gui --demo --workspace .
 
 The desktop GUI exposes the same workspace, model, API timeout, turn limit, and command timeout settings before a task starts. Its event log, command output, file-change preview, and final answer are shown in separate views.
 
+在具有图形桌面会话的系统上，可执行不运行 Agent 任务的窗口启动检查：
+
+```powershell
+python scripts/gui_smoke.py --workspace .
+```
+
+该检查只验证 tkinter 窗口与本项目 GUI 可创建并关闭；它不替代对 macOS、Linux 或实际交互流程的人工验证。
+本项目已于 2026-08-29 在 Windows 图形会话中运行该检查；其他平台仍需分别验证。
+
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
 
 Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线重连；事件详情中的工具参数和命令输出可展开查看。
