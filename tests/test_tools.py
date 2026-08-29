@@ -50,7 +50,7 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_command_safety_timeout_and_output_limit(self):
         self.assertFalse(self.registry.execute("run_command", {"command": "rm -rf /"})["ok"])
-        self.assertIn("safety policy", self.registry.execute("run_command", {"command": "rm -rf /"})["error"])
+        self.assertIn("requires local approval", self.registry.execute("run_command", {"command": "rm -rf /"})["error"])
         self.registry.config = Config(workspace=Path(self.temp_dir.name), command_timeout=0.1)
         timeout_result = self.registry.execute("run_command", {"command": "python -c \"import time; time.sleep(1)\""})
         self.assertTrue(timeout_result["timeout"])
@@ -63,6 +63,11 @@ class ToolRegistryTests(unittest.TestCase):
         result = self.registry.execute("run_command", {"command": "python -c \"import time; time.sleep(1)\""}, is_cancelled=lambda: True)
         self.assertFalse(result["ok"])
         self.assertTrue(result["cancelled"])
+
+    def test_dangerous_command_requires_explicit_approval(self):
+        result = self.registry.execute("run_command", {"command": "shutdown /?"})
+        self.assertTrue(result["requires_approval"])
+        self.assertEqual(result["error"], "command requires local approval")
 
 
 if __name__ == "__main__":

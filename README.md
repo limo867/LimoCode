@@ -18,6 +18,8 @@ python main.py --demo "列出项目文件"
 
 常用 CLI 参数：`--workspace`、`--model`、`--max-turns`、`--timeout`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
 
+危险命令默认不会执行。需要本地人工批准的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。
+
 真实模型运行前设置 `LLM_API_KEY`（以及可选的 `LLM_BASE_URL`、`LLM_MODEL`）：
 
 ```powershell

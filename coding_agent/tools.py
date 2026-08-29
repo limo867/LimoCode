@@ -131,8 +131,8 @@ class ToolRegistry:
     def run_command(self, command: str, is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         if not isinstance(command, str) or not command.strip():
             return {"ok": False, "error": "command must be a non-empty string"}
-        if self._is_dangerous(command):
-            return {"ok": False, "error": "command rejected by safety policy"}
+        if self._is_dangerous(command) and command not in self.config.approved_commands:
+            return {"ok": False, "error": "command requires local approval", "requires_approval": True}
         started = time.perf_counter()
         is_cancelled = is_cancelled or (lambda: False)
         try:

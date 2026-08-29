@@ -11,6 +11,7 @@ from .agent import Agent, DemoModel, ModelClient
 from .config import Config
 from .events import AgentEvent
 from .llm_client import OpenAICompatibleClient
+from .storage import TaskStore
 
 
 ModelFactory = Callable[[Config, bool], ModelClient]
@@ -50,6 +51,17 @@ class AgentService:
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = Lock()
         self.max_tasks = 100
+        self.store = TaskStore(config.history_db) if config.history_db else None
+        if self.store:
+            for snapshot in self.store.load_tasks():
+                record = TaskRecord(**snapshot)
+                record.events.extend(self.store.load_events(record.id))
+                record.next_sequence = (record.events[-1].sequence + 1) if record.events else 1
+                if record.status in {"queued", "running"}:
+                    record.status = "failed"
+                    record.error = "task interrupted because the service restarted"
+                    self.store.save_task(record.snapshot())
+                self._tasks[record.id] = record
 
     @staticmethod
     def _default_model_factory(config: Config, demo: bool) -> ModelClient:
@@ -63,6 +75,8 @@ class AgentService:
         record = TaskRecord(id=uuid.uuid4().hex, task=task.strip())
         with self._lock:
             self._tasks[record.id] = record
+            if self.store:
+                self.store.save_task(record.snapshot())
             if len(self._tasks) > self.max_tasks:
                 finished = [item for item in self._tasks.values() if item.status in {"completed", "failed", "cancelled"} and item.id != record.id]
                 count = len(self._tasks) - self.max_tasks
@@ -100,6 +114,8 @@ class AgentService:
 
         try:
             record.status = "running"
+            if self.store:
+                self.store.save_task(record.snapshot())
             model = self.model_factory(self.config, demo)
             agent = Agent(self.config, model=model, event_callback=emit, is_cancelled=record.cancelled.is_set)
             record.result = agent.run(record.task)
@@ -113,13 +129,20 @@ class AgentService:
             else:
                 record.status = "completed"
                 self._emit(record, "task_finished", {"result": record.result, "status": agent.last_status})
+            if self.store:
+                self.store.save_task(record.snapshot())
         except Exception as exc:
             record.status = "failed"
             record.error = str(exc)
             self._emit(record, "task_error", {"error": record.error})
+            if self.store:
+                self.store.save_task(record.snapshot())
 
     def _emit(self, record: TaskRecord, event_type: str, data: dict[str, Any]) -> None:
         with self._lock:
             sequence = record.next_sequence
             record.next_sequence += 1
-            record.events.append(AgentEvent(type=event_type, task_id=record.id, data=data, sequence=sequence))
+            event = AgentEvent(type=event_type, task_id=record.id, data=data, sequence=sequence)
+            record.events.append(event)
+            if self.store:
+                self.store.save_event(event)

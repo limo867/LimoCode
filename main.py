@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -20,19 +21,11 @@ def main() -> None:
     task = args.task or input("Task> ").strip()
     config = Config.from_env(args.workspace)
     if args.model or args.max_turns or args.timeout:
-        config = Config(
-            workspace=config.workspace,
+        config = replace(
+            config,
             model=args.model or config.model,
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model_timeout=config.model_timeout,
-            model_retries=config.model_retries,
             max_turns=args.max_turns or config.max_turns,
             command_timeout=args.timeout or config.command_timeout,
-            max_output_chars=config.max_output_chars,
-            max_file_chars=config.max_file_chars,
-            max_history_messages=config.max_history_messages,
-            max_history_chars=config.max_history_chars,
         )
     if args.demo:
         model = DemoModel()
