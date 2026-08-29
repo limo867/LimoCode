@@ -13,10 +13,11 @@ python web_server.py --demo --workspace .
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/health` | Server health check. |
-| `GET` | `/api/tasks` | Recent in-memory task summaries. |
+| `GET` | `/api/tasks?limit=N&offset=N` | Paginated task summaries (`limit` defaults to 50 and is capped at 100). |
 | `POST` | `/api/tasks` | Create a task. |
 | `GET` | `/api/tasks/{id}` | Get a task summary. |
 | `GET` | `/api/tasks/{id}/events?after=N` | SSE events after sequence `N`. |
+| `GET` | `/api/tasks/{id}/event-log?after=N&limit=N` | Bounded JSON event history for inspection or recovery. |
 | `DELETE` | `/api/tasks/{id}` | Request task cancellation. |
 
 Create a demo task:
@@ -29,6 +30,8 @@ Create a demo task:
 ```
 
 The SSE event payload includes `id`, `sequence`, `timestamp`, `type`, `task_id`, and event-specific `data`. Clients should persist the largest observed `sequence` and reconnect using `after` to avoid duplicate rendering.
+
+Paged task and event-history responses include `next_offset` or `next_after`. A `null` value means the returned page is the final page. The event-history endpoint defaults to 100 entries and is capped at 500; it does not replace the real-time SSE endpoint.
 
 ## Limitations
 

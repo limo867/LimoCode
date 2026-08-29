@@ -45,7 +45,13 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "service": "coding-agent"})
             return
         if parsed.path == "/api/tasks":
-            self._send_json(200, {"tasks": self.service.list_tasks()})
+            try:
+                limit, offset = self._page_arguments(parsed, default_limit=50, maximum_limit=100)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            tasks = self.service.list_tasks(limit=limit, offset=offset)
+            self._send_json(200, {"tasks": tasks, "limit": limit, "offset": offset, "next_offset": offset + len(tasks) if len(tasks) == limit else None})
             return
         parts = parsed.path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "tasks"] and parts[2]:
@@ -58,10 +64,43 @@ class ApiHandler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "events":
             self._stream_events(parts[2])
             return
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "event-log":
+            self._event_log(parts[2], parsed)
+            return
         if parsed.path in {"/", "/index.html"}:
             self._serve_file("index.html", "text/html; charset=utf-8")
             return
         self._send_json(404, {"error": "not found"})
+
+    @staticmethod
+    def _page_arguments(parsed, *, default_limit: int, maximum_limit: int) -> tuple[int, int]:
+        query = parse_qs(parsed.query)
+        try:
+            limit = int(query.get("limit", [str(default_limit)])[0])
+            offset = int(query.get("offset", ["0"])[0])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit and offset must be integers") from exc
+        if not 1 <= limit <= maximum_limit:
+            raise ValueError(f"limit must be between 1 and {maximum_limit}")
+        if offset < 0:
+            raise ValueError("offset must not be negative")
+        return limit, offset
+
+    def _event_log(self, task_id: str, parsed) -> None:
+        if not self.service.get_task(task_id):
+            self._send_json(404, {"error": "task not found"})
+            return
+        query = parse_qs(parsed.query)
+        try:
+            after = int(query.get("after", ["0"])[0])
+            if after < 0:
+                raise ValueError("after must not be negative")
+            limit, _ = self._page_arguments(parsed, default_limit=100, maximum_limit=500)
+        except (TypeError, ValueError) as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        events = self.service.events(task_id, after, limit=limit)
+        self._send_json(200, {"events": [event.to_dict() for event in events], "after": after, "limit": limit, "next_after": events[-1].sequence if len(events) == limit else None})
 
     def _stream_events(self, task_id: str) -> None:
         record = self.service.get_task(task_id)

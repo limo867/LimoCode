@@ -64,6 +64,35 @@ class WebApiTests(unittest.TestCase):
         events = ApiHandler.service.events(task_id)
         self.assertEqual([event.sequence for event in events], list(range(1, len(events) + 1)))
 
+    def test_task_and_event_history_pagination(self):
+        task_ids = []
+        for _ in range(2):
+            status, body = self.request("POST", "/api/tasks", {"task": "demo", "demo": True})
+            self.assertEqual(status, 202)
+            task_ids.append(json.loads(body)["id"])
+        for task_id in task_ids:
+            for _ in range(20):
+                if ApiHandler.service.get_task(task_id).status == "completed":
+                    break
+                time.sleep(0.05)
+
+        status, body = self.request("GET", "/api/tasks?limit=1&offset=0")
+        page = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page["tasks"]), 1)
+        self.assertEqual(page["next_offset"], 1)
+
+        task_id = task_ids[0]
+        status, body = self.request("GET", f"/api/tasks/{task_id}/event-log?after=0&limit=1")
+        page = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(page["events"]), 1)
+        self.assertEqual(page["next_after"], 1)
+
+        status, body = self.request("GET", "/api/tasks?limit=0")
+        self.assertEqual(status, 400)
+        self.assertIn("limit", json.loads(body)["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

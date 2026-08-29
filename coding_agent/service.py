@@ -102,15 +102,17 @@ class AgentService:
         with self._lock:
             return self._tasks.get(task_id)
 
-    def list_tasks(self) -> list[dict[str, Any]]:
+    def list_tasks(self, *, limit: int | None = None, offset: int = 0) -> list[dict[str, Any]]:
         with self._lock:
-            return [record.snapshot() for record in sorted(self._tasks.values(), key=lambda item: item.created_at, reverse=True)]
+            records = sorted(self._tasks.values(), key=lambda item: item.created_at, reverse=True)
+            return [record.snapshot() for record in records[offset : offset + limit if limit is not None else None]]
 
-    def events(self, task_id: str, after: int = 0) -> list[AgentEvent]:
+    def events(self, task_id: str, after: int = 0, *, limit: int | None = None) -> list[AgentEvent]:
         record = self.get_task(task_id)
         if not record:
             return []
-        return [event for event in record.events if event.sequence > after]
+        events = [event for event in record.events if event.sequence > after]
+        return events[:limit] if limit is not None else events
 
     def cancel_task(self, task_id: str) -> bool:
         record = self.get_task(task_id)
