@@ -23,7 +23,8 @@
     .event.tool_started { border-color: #f59e0b; } .event.tool_finished { border-color: #10b981; }
     .event.task_error { border-color: #ef4444; } .event.assistant_message, .event.task_finished { border-color: #60a5fa; }
     .event strong { display: block; font-size: .82rem; margin-bottom: 4px; }
-    pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; color: #d1d5db; }
+    .event .meta { color: #9ca3af; font-size: .78rem; } pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; color: #d1d5db; }
+    details { margin-top: 7px; color: #d1d5db; } summary { cursor: pointer; color: #93c5fd; }
     .history { max-height: 65vh; overflow: auto; } .history button { width: 100%; text-align: left; margin-bottom: 7px; background: #374151; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; }
     @media (max-width: 980px) { main { grid-template-columns: 190px 1fr; } main > section:nth-child(2) { grid-column: 1 / -1; } }
     @media (max-width: 760px) { main { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 5px; flex-direction: column; } .history { max-height: 180px; } }
@@ -48,12 +49,19 @@
     async function loadHistory() { const response = await fetch('/api/tasks'); if (!response.ok) return; const data = await response.json(); const panel = document.querySelector('#history'); panel.innerHTML = ''; if (!data.tasks.length) { panel.textContent = '暂无任务'; return; } data.tasks.forEach(item => { const button = document.createElement('button'); button.textContent = `${item.status} · ${item.task}`; button.onclick = () => openTask(item.id); panel.appendChild(button); }); }
     async function openTask(id) { taskId = id; lastEvent = 0; seen = new Set(); timeline.innerHTML = ''; status.textContent = '加载中'; const response = await fetch(`/api/tasks/${id}`); const record = await response.json(); meta.textContent = `任务 ${id.slice(0, 8)}`; if (record.status === 'completed') status.textContent = '已完成'; connectEvents(); }
     function connectEvents() { if (source) source.close(); source = new EventSource(`/api/tasks/${taskId}/events?after=${lastEvent}`); source.onmessage = event => { const payload = JSON.parse(event.data); if (seen.has(payload.id)) return; seen.add(payload.id); lastEvent = Math.max(lastEvent, payload.sequence || 0); addEvent(payload); status.textContent = payload.type === 'task_finished' ? '已完成' : payload.type === 'task_error' ? '失败' : payload.type === 'task_cancelled' ? '已停止' : '运行中'; if (['task_finished','task_error','task_cancelled'].includes(payload.type)) finish(); }; source.onerror = () => { if (source && source.readyState === EventSource.CLOSED && taskId) setTimeout(connectEvents, 1000); }; }
+    function appendText(parent, value) { const pre = document.createElement('pre'); pre.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); parent.appendChild(pre); }
     function addEvent(event) {
       if (timeline.querySelector('.subtle')) timeline.innerHTML = '';
       const item = document.createElement('div'); item.className = `event ${event.type}`;
-      const title = document.createElement('strong'); title.textContent = event.type;
+      const data = event.data || {}; const title = document.createElement('strong');
+      title.textContent = event.type === 'tool_started' ? `Running ${data.tool}` : event.type === 'tool_finished' ? `${data.tool} ${data.result && data.result.ok ? 'completed' : 'failed'}` : event.type.replaceAll('_', ' ');
       item.appendChild(title);
-      const data = document.createElement('pre'); data.textContent = JSON.stringify(event.data || {}, null, 2); item.appendChild(data);
+      const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = `Event ${event.sequence || '?'} · ${new Date(event.timestamp).toLocaleTimeString()}`; item.appendChild(meta);
+      if (event.type === 'tool_started') appendText(item, data.arguments || {});
+      else if (event.type === 'tool_finished') {
+        const result = data.result || {}; const summary = document.createElement('div'); summary.className = 'meta'; summary.textContent = result.error || (result.path ? `Path: ${result.path}` : result.returncode !== undefined ? `Exit code: ${result.returncode}` : 'Completed'); item.appendChild(summary);
+        if (result.output || result.content) { const details = document.createElement('details'); const label = document.createElement('summary'); label.textContent = result.output ? 'Command output' : 'File content'; details.appendChild(label); appendText(details, result.output || result.content); item.appendChild(details); }
+      } else if (event.type === 'assistant_message' || event.type === 'task_finished' || event.type === 'task_error') appendText(item, data.content || data.result || data.error || data);
       timeline.appendChild(item); timeline.scrollTop = timeline.scrollHeight;
     }
     function finish() { start.disabled = false; stop.disabled = true; if (source) source.close(); source = null; }

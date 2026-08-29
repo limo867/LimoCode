@@ -1,9 +1,13 @@
-"""Small tkinter desktop entry point backed by the shared AgentService."""
+"""Desktop GUI backed by AgentService, without duplicating agent logic."""
 
 import argparse
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+import os
+from dataclasses import replace
 from pathlib import Path
+import subprocess
+import sys
+import tkinter as tk
+from tkinter import filedialog, scrolledtext
 
 from .config import Config
 from .service import AgentService
@@ -14,66 +18,131 @@ class AgentWindow:
         self.root, self.config, self.demo = root, config, demo
         self.service = AgentService(config)
         self.record = None
+        self.last_sequence = 0
         root.title("Local Coding Agent")
-        root.geometry("900x620")
-        top = tk.Frame(root, padx=12, pady=12)
-        top.pack(fill=tk.X)
-        tk.Label(top, text="任务").pack(anchor=tk.W)
-        self.task = tk.Entry(top)
-        self.task.pack(fill=tk.X, pady=(4, 8))
-        actions = tk.Frame(top)
+        root.geometry("1040x700")
+        root.minsize(780, 520)
+
+        controls = tk.Frame(root, padx=12, pady=10)
+        controls.pack(fill=tk.X)
+        tk.Label(controls, text="Task").grid(row=0, column=0, sticky="w")
+        self.task = tk.Entry(controls)
+        self.task.grid(row=0, column=1, columnspan=5, sticky="ew", padx=(8, 0))
+        tk.Label(controls, text="Workspace").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.workspace = tk.StringVar(value=str(config.workspace))
+        tk.Entry(controls, textvariable=self.workspace).grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 4), pady=(8, 0))
+        tk.Button(controls, text="Browse", command=self.choose_workspace).grid(row=1, column=4, pady=(8, 0))
+        self.demo_var = tk.BooleanVar(value=demo)
+        tk.Checkbutton(controls, text="Offline demo", variable=self.demo_var).grid(row=1, column=5, padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Max turns").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.max_turns = tk.Spinbox(controls, from_=1, to=100, width=7)
+        self.max_turns.delete(0, tk.END)
+        self.max_turns.insert(0, str(config.max_turns))
+        self.max_turns.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Command timeout (s)").grid(row=2, column=2, sticky="e", pady=(8, 0))
+        self.timeout = tk.Spinbox(controls, from_=1, to=600, width=7)
+        self.timeout.delete(0, tk.END)
+        self.timeout.insert(0, str(config.command_timeout))
+        self.timeout.grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        self.start_button = tk.Button(controls, text="Start", command=self.start)
+        self.start_button.grid(row=2, column=4, pady=(8, 0))
+        self.stop_button = tk.Button(controls, text="Stop", command=self.stop, state=tk.DISABLED)
+        self.stop_button.grid(row=2, column=5, padx=(8, 0), pady=(8, 0))
+        controls.columnconfigure(1, weight=1)
+        controls.columnconfigure(3, weight=1)
+
+        actions = tk.Frame(root, padx=12)
         actions.pack(fill=tk.X)
-        tk.Button(actions, text="开始", command=self.start).pack(side=tk.LEFT)
-        self.stop_button = tk.Button(actions, text="停止", command=self.stop, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, padx=6)
-        tk.Button(actions, text="打开工作区", command=self.open_workspace).pack(side=tk.LEFT)
-        self.status = tk.Label(actions, text="就绪", fg="#666")
+        tk.Button(actions, text="Copy result", command=self.copy_result).pack(side=tk.LEFT)
+        tk.Button(actions, text="Open workspace", command=self.open_workspace).pack(side=tk.LEFT, padx=6)
+        tk.Button(actions, text="Clear", command=self.clear).pack(side=tk.LEFT)
+        self.status = tk.Label(actions, text="Ready", fg="#52616b")
         self.status.pack(side=tk.RIGHT)
-        self.log = scrolledtext.ScrolledText(root, state=tk.DISABLED, wrap=tk.WORD)
-        self.log.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+
+        panes = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
+        panes.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        self.events = scrolledtext.ScrolledText(panes, state=tk.DISABLED, wrap=tk.WORD, width=58)
+        self.result = scrolledtext.ScrolledText(panes, state=tk.DISABLED, wrap=tk.WORD, width=58)
+        panes.add(self.events, minsize=300)
+        panes.add(self.result, minsize=300)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
-    def start(self):
-        if not self.task.get().strip() or self.record and self.record.status == "running":
+    def _updated_config(self) -> Config:
+        workspace = Path(self.workspace.get()).expanduser().resolve()
+        return replace(self.config, workspace=workspace, max_turns=int(self.max_turns.get()), command_timeout=int(self.timeout.get()))
+
+    def choose_workspace(self) -> None:
+        selected = filedialog.askdirectory(initialdir=self.workspace.get())
+        if selected:
+            self.workspace.set(selected)
+
+    def start(self) -> None:
+        if not self.task.get().strip() or (self.record and self.record.status == "running"):
             return
-        self.log.configure(state=tk.NORMAL)
-        self.log.delete("1.0", tk.END)
-        self.log.configure(state=tk.DISABLED)
-        self.record = self.service.create_task(self.task.get(), demo=self.demo)
-        self.event_count = 0
-        self.status.config(text="运行中")
+        try:
+            self.config = self._updated_config()
+        except (ValueError, OSError):
+            self.status.config(text="Invalid workspace or numeric setting", fg="#a33131")
+            return
+        self.service = AgentService(self.config)
+        self.clear()
+        self.record = self.service.create_task(self.task.get(), demo=self.demo_var.get())
+        self.last_sequence = 0
+        self.status.config(text="Running", fg="#2563eb")
+        self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.root.after(100, self.poll)
 
-    def poll(self):
+    def poll(self) -> None:
         if not self.record:
             return
-        events = self.service.events(self.record.id, getattr(self, "event_count", 0))
-        self.event_count = getattr(self, "event_count", 0) + len(events)
-        for event in events:
-            self.log.configure(state=tk.NORMAL)
-            self.log.insert(tk.END, f"[{event.type}]\n{event.data}\n\n")
-            self.log.see(tk.END)
-            self.log.configure(state=tk.DISABLED)
+        for event in self.service.events(self.record.id, self.last_sequence):
+            self.last_sequence = event.sequence
+            self._append(self.events, f"[{event.type}]\n{event.data}\n\n")
         if self.record.status in {"completed", "failed", "cancelled"}:
-            self.status.config(text=self.record.status)
+            self._append(self.result, self.record.result or self.record.error or "No final result.")
+            colour = "#14804a" if self.record.status == "completed" else "#a33131"
+            self.status.config(text=self.record.status.capitalize(), fg=colour)
+            self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             return
         self.root.after(100, self.poll)
 
-    def stop(self):
-        if self.record:
-            self.service.cancel_task(self.record.id)
-            self.status.config(text="正在停止")
+    def stop(self) -> None:
+        if self.record and self.service.cancel_task(self.record.id):
+            self.status.config(text="Cancelling", fg="#a56a00")
+            self.stop_button.config(state=tk.DISABLED)
 
-    def open_workspace(self):
-        selected = filedialog.askdirectory(initialdir=str(self.config.workspace))
-        if selected:
-            self.config = Config.from_env(selected)
-            self.service = AgentService(self.config)
-            self.status.config(text=f"工作区: {Path(selected).name}")
+    def _append(self, widget: scrolledtext.ScrolledText, text: str) -> None:
+        widget.configure(state=tk.NORMAL)
+        widget.insert(tk.END, text)
+        widget.see(tk.END)
+        widget.configure(state=tk.DISABLED)
 
-    def close(self):
+    def clear(self) -> None:
+        for widget in (self.events, self.result):
+            widget.configure(state=tk.NORMAL)
+            widget.delete("1.0", tk.END)
+            widget.configure(state=tk.DISABLED)
+
+    def copy_result(self) -> None:
+        text = self.result.get("1.0", tk.END).strip()
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.status.config(text="Result copied", fg="#14804a")
+
+    def open_workspace(self) -> None:
+        target = str(Path(self.workspace.get()).expanduser())
+        try:
+            if os.name == "nt":
+                os.startfile(target)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target])
+        except OSError:
+            self.status.config(text="Could not open workspace", fg="#a33131")
+
+    def close(self) -> None:
         if self.record and self.record.status == "running":
             self.service.cancel_task(self.record.id)
         self.root.destroy()

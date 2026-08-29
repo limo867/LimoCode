@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Any, Callable, Protocol
 
 from .config import Config
@@ -50,6 +51,7 @@ class Agent:
         model: ModelClient | None = None,
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        sleeper: Callable[[float], None] | None = None,
     ):
         self.config = config
         self.registry = ToolRegistry(config)
@@ -59,6 +61,7 @@ class Agent:
         self.last_status = "idle"
         self._event_callback = event_callback or (lambda _type, _data: None)
         self._is_cancelled = is_cancelled or (lambda: False)
+        self._sleeper = sleeper or time.sleep
 
     def run(self, task: str) -> str:
         self.messages = [
@@ -100,7 +103,7 @@ class Agent:
                 name = call.get("name", "") if isinstance(call, dict) else ""
                 arguments, error = self._parse_arguments(call.get("arguments") if isinstance(call, dict) else None)
                 self._emit("tool_started", {"turn": turn, "tool": name or "<invalid>", "arguments": self._argument_summary(arguments)})
-                result = {"ok": False, "error": error} if error else self.registry.execute(name, arguments)
+                result = {"ok": False, "error": error} if error else self.registry.execute(name, arguments, is_cancelled=self._is_cancelled)
                 self.execution_log.append(
                     {
                         "turn": turn,
@@ -127,6 +130,9 @@ class Agent:
             except LLMRequestError:
                 if attempt == attempts - 1:
                     raise
+                delay = self.config.model_retry_base_delay_ms / 1000 * (2**attempt)
+                self._emit("model_retrying", {"attempt": attempt + 1, "delay_ms": round(delay * 1000)})
+                self._sleeper(delay)
         raise RuntimeError("unreachable")
 
     def _context_messages(self) -> list[dict[str, Any]]:

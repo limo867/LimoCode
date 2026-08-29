@@ -59,6 +59,11 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(output_result["truncated"])
         self.assertEqual(len(output_result["output"]), 5)
 
+    def test_command_can_be_cancelled(self):
+        result = self.registry.execute("run_command", {"command": "python -c \"import time; time.sleep(1)\""}, is_cancelled=lambda: True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["cancelled"])
+
 
 if __name__ == "__main__":
     unittest.main()

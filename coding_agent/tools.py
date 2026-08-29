@@ -66,7 +66,7 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self.tools.values()]
 
-    def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(self, name: str, arguments: dict[str, Any], is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         tool = self.tools.get(name)
         if not tool:
             return {"ok": False, "error": f"unknown tool: {name}"}
@@ -81,6 +81,8 @@ class ToolRegistry:
         if missing:
             return {"ok": False, "error": f"missing required argument(s): {', '.join(missing)}"}
         try:
+            if name == "run_command":
+                return tool.handler(**arguments, is_cancelled=is_cancelled or (lambda: False))
             return tool.handler(**arguments)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -126,22 +128,34 @@ class ToolRegistry:
         target.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "bytes": len(content.encode("utf-8"))}
 
-    def run_command(self, command: str) -> dict[str, Any]:
+    def run_command(self, command: str, is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         if not isinstance(command, str) or not command.strip():
             return {"ok": False, "error": "command must be a non-empty string"}
         if self._is_dangerous(command):
             return {"ok": False, "error": "command rejected by safety policy"}
         started = time.perf_counter()
+        is_cancelled = is_cancelled or (lambda: False)
         try:
-            result = subprocess.run(command, cwd=self.workspace.root, shell=True, text=True, capture_output=True, timeout=self.config.command_timeout)
-        except subprocess.TimeoutExpired as exc:
-            return {"ok": False, "error": f"command timed out after {self.config.command_timeout}s", "timeout": True, "duration_ms": round((time.perf_counter() - started) * 1000)}
+            process = subprocess.Popen(command, cwd=self.workspace.root, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as exc:
             return {"ok": False, "error": f"command could not be started: {exc}", "duration_ms": round((time.perf_counter() - started) * 1000)}
-        full_output = result.stdout + result.stderr
+        stdout, stderr = "", ""
+        while True:
+            elapsed = time.perf_counter() - started
+            if is_cancelled() or elapsed >= self.config.command_timeout:
+                process.terminate()
+                stdout, stderr = process.communicate()
+                reason = "command cancelled" if is_cancelled() else f"command timed out after {self.config.command_timeout}s"
+                return {"ok": False, "error": reason, "cancelled": is_cancelled(), "timeout": not is_cancelled(), "output": (stdout + stderr)[: self.config.max_output_chars], "duration_ms": round((time.perf_counter() - started) * 1000)}
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.2, self.config.command_timeout - elapsed))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        full_output = stdout + stderr
         truncated = len(full_output) > self.config.max_output_chars
         output = full_output[: self.config.max_output_chars]
-        return {"ok": result.returncode == 0, "returncode": result.returncode, "output": output, "truncated": truncated, "duration_ms": round((time.perf_counter() - started) * 1000)}
+        return {"ok": process.returncode == 0, "returncode": process.returncode, "output": output, "truncated": truncated, "duration_ms": round((time.perf_counter() - started) * 1000)}
 
     @staticmethod
     def _is_dangerous(command: str) -> bool:

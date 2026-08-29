@@ -13,6 +13,7 @@ class Config:
     api_key: str | None = None
     model_timeout: int = 60
     model_retries: int = 1
+    model_retry_base_delay_ms: int = 250
     max_turns: int = 12
     command_timeout: int = 30
     max_output_chars: int = 12000
@@ -30,6 +31,7 @@ class Config:
             api_key=os.getenv("LLM_API_KEY"),
             model_timeout=int(os.getenv("LLM_TIMEOUT", "60")),
             model_retries=int(os.getenv("LLM_RETRIES", "1")),
+            model_retry_base_delay_ms=int(os.getenv("LLM_RETRY_BASE_DELAY_MS", "250")),
             max_turns=int(os.getenv("AGENT_MAX_TURNS", "12")),
             command_timeout=int(os.getenv("AGENT_COMMAND_TIMEOUT", "30")),
             max_output_chars=int(os.getenv("AGENT_MAX_OUTPUT_CHARS", "12000")),

@@ -51,6 +51,13 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(model.calls, 2)
         self.assertEqual(agent.last_status, "completed")
 
+    def test_retries_with_exponential_backoff(self):
+        sleeps = []
+        model = RetryModel()
+        agent = Agent(Config(workspace=self.workspace, model_retries=1, model_retry_base_delay_ms=50), model, sleeper=sleeps.append)
+        agent.run("retry")
+        self.assertEqual(sleeps, [0.05])
+
     def test_returns_summary_for_persistent_model_failure(self):
         agent = Agent(Config(workspace=self.workspace, model_retries=0), FailingModel())
         self.assertIn("Agent failed during model request", agent.run("fail"))

@@ -10,6 +10,12 @@
 python main.py --demo "列出项目文件"
 ```
 
+运行全部检查：
+
+```powershell
+.\scripts\test.ps1
+```
+
 常用 CLI 参数：`--workspace`、`--model`、`--max-turns`、`--timeout`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
 
 真实模型运行前设置 `LLM_API_KEY`（以及可选的 `LLM_BASE_URL`、`LLM_MODEL`）：
@@ -59,6 +65,8 @@ python -m coding_agent.gui --demo --workspace .
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
 
 Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线重连；事件详情中的工具参数和命令输出可展开查看。
+
+Web API 文档见 `api.md`。GitHub Actions 会在推送和拉取请求时运行测试与编译检查。
 
 运行基础测试：
 
