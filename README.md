@@ -20,6 +20,8 @@ python main.py --demo "列出项目文件"
 
 危险命令默认不会执行。需要本地人工批准的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。
 
+当同一服务进程需要并发执行真实模型任务时，可设置 `LLM_MIN_REQUEST_INTERVAL_MS` 为相邻模型请求的最小间隔（毫秒）。默认值 `0` 表示不额外限流；限流等待会显示为任务事件，并能响应任务取消。
+
 真实模型运行前设置 `LLM_API_KEY`（以及可选的 `LLM_BASE_URL`、`LLM_MODEL`）：
 
 ```powershell

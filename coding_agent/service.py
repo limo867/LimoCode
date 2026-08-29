@@ -7,7 +7,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable
 import uuid
 
-from .agent import Agent, DemoModel, ModelClient
+from .agent import Agent, DemoModel, ModelClient, ModelRequestLimiter
 from .config import Config
 from .events import AgentEvent
 from .llm_client import OpenAICompatibleClient
@@ -63,6 +63,7 @@ class AgentService:
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = Lock()
         self.max_tasks = 100
+        self._request_limiter = ModelRequestLimiter(config.model_min_request_interval_ms)
         self.store = TaskStore(config.history_db) if config.history_db else None
         if self.store:
             for snapshot in self.store.load_tasks():
@@ -130,7 +131,13 @@ class AgentService:
                     self.store.save_task(record.snapshot())
                 self._trim_tasks_locked()
             model = self.model_factory(self.config, demo)
-            agent = Agent(self.config, model=model, event_callback=emit, is_cancelled=record.cancelled.is_set)
+            agent = Agent(
+                self.config,
+                model=model,
+                event_callback=emit,
+                is_cancelled=record.cancelled.is_set,
+                request_limiter=self._request_limiter,
+            )
             record.result = agent.run(record.task)
             if record.cancelled.is_set() or agent.last_status == "cancelled":
                 with self._lock:

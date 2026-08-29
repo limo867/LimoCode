@@ -1,4 +1,5 @@
 import time
+from threading import Barrier, Lock
 import unittest
 from pathlib import Path
 import tempfile
@@ -51,3 +52,33 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(record.status, "completed")
         with self.assertRaises(ValueError):
             record.transition("running")
+
+    def test_concurrent_tasks_share_model_request_rate_limit(self):
+        class TimestampModel:
+            def __init__(self):
+                self.calls = []
+                self.lock = Lock()
+
+            def complete(self, messages, tools):
+                with self.lock:
+                    self.calls.append(time.monotonic())
+                return {"content": "done"}
+
+        model = TimestampModel()
+        config = Config(workspace=self.config.workspace, model_min_request_interval_ms=30)
+        barrier = Barrier(2)
+
+        def model_factory(_config, _demo):
+            barrier.wait(timeout=1)
+            return model
+
+        service = AgentService(config, model_factory=model_factory)
+        records = [service.create_task(f"task {index}") for index in range(2)]
+        for record in records:
+            record.thread.join(timeout=3)
+            self.assertEqual(record.status, "completed")
+        timestamps = sorted(model.calls)
+        self.assertEqual(len(timestamps), 2)
+        self.assertGreaterEqual(timestamps[1] - timestamps[0], 0.02)
+        events = [event for record in records for event in service.events(record.id)]
+        self.assertTrue(any(event.type == "model_rate_limited" for event in events))

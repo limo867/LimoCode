@@ -1,5 +1,6 @@
 import json
 import time
+from threading import Lock
 from typing import Any, Callable, Protocol
 
 from .config import Config
@@ -9,6 +10,32 @@ from .tools import ToolRegistry
 
 class ModelClient(Protocol):
     def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]: ...
+
+
+class ModelRequestCancelled(LLMError):
+    """Raised when cancellation happens while waiting for a model request slot."""
+
+
+class ModelRequestLimiter:
+    """Thread-safe minimum-interval gate shared by model clients in one process."""
+
+    def __init__(self, minimum_interval_ms: int = 0):
+        self.minimum_interval = max(0, minimum_interval_ms) / 1000
+        self._next_request_at = 0.0
+        self._lock = Lock()
+
+    def wait(self, is_cancelled: Callable[[], bool]) -> int:
+        started = time.monotonic()
+        while True:
+            if is_cancelled():
+                raise ModelRequestCancelled("model request was cancelled while waiting for rate limit")
+            with self._lock:
+                now = time.monotonic()
+                delay = self._next_request_at - now
+                if delay <= 0:
+                    self._next_request_at = now + self.minimum_interval
+                    return round((now - started) * 1000)
+            time.sleep(min(delay, 0.1))
 
 
 class DemoModel:
@@ -52,6 +79,7 @@ class Agent:
         event_callback: Callable[[str, dict[str, Any]], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         sleeper: Callable[[float], None] | None = None,
+        request_limiter: ModelRequestLimiter | None = None,
     ):
         self.config = config
         self.registry = ToolRegistry(config)
@@ -62,6 +90,7 @@ class Agent:
         self._event_callback = event_callback or (lambda _type, _data: None)
         self._is_cancelled = is_cancelled or (lambda: False)
         self._sleeper = sleeper or time.sleep
+        self._request_limiter = request_limiter or ModelRequestLimiter(config.model_min_request_interval_ms)
 
     def run(self, task: str) -> str:
         self.messages = [
@@ -78,6 +107,9 @@ class Agent:
             self._emit("model_thinking", {"turn": turn})
             try:
                 response = self._complete_with_retry()
+            except ModelRequestCancelled:
+                self.last_status = "cancelled"
+                return "Agent task was cancelled."
             except LLMError as exc:
                 self.last_status = "failed"
                 result = self._failure_summary("model request", str(exc))
@@ -126,6 +158,9 @@ class Agent:
         attempts = max(0, self.config.model_retries) + 1
         for attempt in range(attempts):
             try:
+                waited_ms = self._request_limiter.wait(self._is_cancelled)
+                if waited_ms:
+                    self._emit("model_rate_limited", {"waited_ms": waited_ms})
                 return self.model.complete(self._context_messages(), self.registry.schemas())
             except LLMRequestError:
                 if attempt == attempts - 1:
