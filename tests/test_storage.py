@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from coding_agent.config import Config
+from coding_agent.events import AgentEvent
 from coding_agent.service import AgentService, TaskRecord
 
 
@@ -67,6 +68,23 @@ class StorageTests(unittest.TestCase):
                 self.assertEqual(record.status, "completed")
                 sequences = [event.sequence for event in service.events(record.id)]
                 self.assertEqual(sequences, list(range(1, len(sequences) + 1)))
+
+    def test_all_persisted_events_remain_available_after_memory_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = Config(workspace=root, history_db=root / "state.sqlite3")
+            first = AgentService(config)
+            record = TaskRecord(id="long-history", task="demo", status="completed")
+            first.store.save_task(record.snapshot())
+            for sequence in range(1, 506):
+                first.store.save_event(AgentEvent("tool_finished", record.id, {"index": sequence}, sequence=sequence))
+            first.store.close()
+
+            second = AgentService(config)
+            self.assertEqual(second.get_task(record.id).snapshot()["event_count"], 505)
+            self.assertEqual(len(second.events(record.id)), 505)
+            self.assertEqual([event.sequence for event in second.events(record.id, after=499, limit=3)], [500, 501, 502])
+            second.store.close()
 
 
 if __name__ == "__main__":

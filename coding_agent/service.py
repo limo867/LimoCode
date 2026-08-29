@@ -60,7 +60,7 @@ class TaskRecord:
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at,
-            "event_count": len(self.events),
+            "event_count": self.next_sequence - 1,
             "approval": (
                 {"id": self.pending_approval.id, "command": self.pending_approval.command}
                 if self.pending_approval
@@ -83,8 +83,8 @@ class AgentService:
         if self.store:
             for snapshot in self.store.load_tasks():
                 record = TaskRecord(**snapshot)
-                record.events.extend(self.store.load_events(record.id))
-                record.next_sequence = (record.events[-1].sequence + 1) if record.events else 1
+                record.events.extend(self.store.load_recent_events(record.id, record.events.maxlen or 500))
+                record.next_sequence = self.store.last_event_sequence(record.id) + 1
                 if record.status in {"queued", "running"}:
                     record.transition("failed")
                     record.error = "task interrupted because the service restarted"
@@ -123,6 +123,8 @@ class AgentService:
         record = self.get_task(task_id)
         if not record:
             return []
+        if self.store:
+            return self.store.load_events(task_id, after, limit)
         events = [event for event in record.events if event.sequence > after]
         return events[:limit] if limit is not None else events
 

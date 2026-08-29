@@ -36,7 +36,7 @@ Paged task and event-history responses include `next_offset` or `next_after`. A 
 
 ## Limitations
 
-Tasks and events are persisted to the local SQLite path configured by `AGENT_HISTORY_DB`, so completed history survives a server restart. Any task left queued or running during a restart is marked failed because its executing thread no longer exists. Cancellation is cooperative: the Agent checks between model and tool steps; command execution additionally terminates its child process when cancellation is observed.
+Tasks and events are persisted to the local SQLite path configured by `AGENT_HISTORY_DB`, so completed history survives a server restart. Event-history pagination reads the persisted records, rather than only the bounded in-memory event window. Any task left queued or running during a restart is marked failed because its executing thread no longer exists. Cancellation is cooperative: the Agent checks between model and tool steps; command execution additionally terminates its child process when cancellation is observed.
 
 High-risk commands are rejected unless the local operator has added an exact match to `AGENT_APPROVED_COMMANDS`. This is a local whitelist, not an operating-system sandbox.
 

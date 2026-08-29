@@ -66,10 +66,28 @@ class TaskStore:
             rows = self._connection.execute("SELECT id, task, status, result, error, created_at FROM tasks ORDER BY created_at DESC").fetchall()
         return [dict(row) for row in rows]
 
-    def load_events(self, task_id: str) -> list[AgentEvent]:
+    def load_events(self, task_id: str, after: int = 0, limit: int | None = None) -> list[AgentEvent]:
+        query = "SELECT id, task_id, sequence, timestamp, type, data FROM events WHERE task_id = ? AND sequence > ? ORDER BY sequence"
+        arguments: list[object] = [task_id, after]
+        if limit is not None:
+            query += " LIMIT ?"
+            arguments.append(limit)
         with self._lock:
-            rows = self._connection.execute("SELECT id, task_id, sequence, timestamp, type, data FROM events WHERE task_id = ? ORDER BY sequence", (task_id,)).fetchall()
-        return [AgentEvent(type=row["type"], task_id=row["task_id"], data=json.loads(row["data"]), sequence=row["sequence"], id=row["id"], timestamp=row["timestamp"]) for row in rows]
+            rows = self._connection.execute(query, arguments).fetchall()
+        return self._events_from_rows(rows)
+
+    def load_recent_events(self, task_id: str, limit: int = 500) -> list[AgentEvent]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, task_id, sequence, timestamp, type, data FROM events WHERE task_id = ? ORDER BY sequence DESC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        return list(reversed(self._events_from_rows(rows)))
+
+    def last_event_sequence(self, task_id: str) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events WHERE task_id = ?", (task_id,)).fetchone()
+        return int(row["sequence"])
 
     def delete_task(self, task_id: str) -> None:
         """Remove a pruned task together with its persisted public events."""
@@ -81,3 +99,7 @@ class TaskStore:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+    @staticmethod
+    def _events_from_rows(rows: list[sqlite3.Row]) -> list[AgentEvent]:
+        return [AgentEvent(type=row["type"], task_id=row["task_id"], data=json.loads(row["data"]), sequence=row["sequence"], id=row["id"], timestamp=row["timestamp"]) for row in rows]
