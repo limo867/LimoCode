@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import os
 
@@ -24,6 +24,29 @@ class Config:
     max_history_chars: int = 8000
     history_db: Path | None = None
     approved_commands: frozenset[str] = frozenset()
+
+    def with_overrides(
+        self,
+        *,
+        workspace: Path | None = None,
+        model: str | None = None,
+        model_timeout: int | None = None,
+        max_turns: int | None = None,
+        command_timeout: int | None = None,
+        command_approval_timeout: int | None = None,
+        model_min_request_interval_ms: int | None = None,
+    ) -> "Config":
+        """Apply optional CLI/UI overrides while preserving environment defaults."""
+        values = {
+            "workspace": workspace,
+            "model": model,
+            "model_timeout": model_timeout,
+            "max_turns": max_turns,
+            "command_timeout": command_timeout,
+            "command_approval_timeout": command_approval_timeout,
+            "model_min_request_interval_ms": model_min_request_interval_ms,
+        }
+        return replace(self, **{key: value for key, value in values.items() if value is not None})
 
     @classmethod
     def from_env(cls, workspace: str | None = None) -> "Config":

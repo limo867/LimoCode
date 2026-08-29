@@ -16,7 +16,7 @@ python main.py --demo "列出项目文件"
 .\scripts\test.ps1
 ```
 
-常用 CLI 参数：`--workspace`、`--model`、`--max-turns`、`--timeout`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
+常用 CLI 参数：`--workspace`、`--model`、`--model-timeout`、`--max-turns`、`--timeout`、`--approval-timeout`、`--min-request-interval`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
 
 危险命令默认不会执行。需要预先放行的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。未在该列表中的高风险命令会在 Web 与桌面 GUI 中请求本地人工确认；拒绝、取消或超过 `AGENT_COMMAND_APPROVAL_TIMEOUT`（默认 120 秒）都不会执行命令。
 
@@ -60,7 +60,7 @@ python main.py --workspace . "检查并修复测试"
 python web_server.py --demo --workspace .
 ```
 
-`web_server.py` supports `--workspace`, `--model`, `--max-turns`, and `--timeout`. The selected workspace applies to every browser task served by that local process.
+`web_server.py` 支持与 CLI 一致的 `--workspace`、`--model`、`--model-timeout`、`--max-turns`、`--timeout`、`--approval-timeout` 和 `--min-request-interval` 配置参数。所选工作区及其运行限制会应用到该本地进程服务的全部浏览器任务。
 
 启动桌面 GUI（需要系统提供 tkinter）：
 
@@ -68,7 +68,7 @@ python web_server.py --demo --workspace .
 python -m coding_agent.gui --demo --workspace .
 ```
 
-The desktop GUI exposes the same workspace, model, API timeout, turn limit, and command timeout settings before a task starts. Its event log, command output, file-change preview, and final answer are shown in separate views.
+桌面 GUI 在任务开始前提供与 CLI/Web 一致的工作区、模型、API 超时、轮数、命令超时、危险命令审批等待时间和模型请求间隔设置。事件日志、命令输出、文件变更预览和最终答复显示在独立视图中。
 
 在具有图形桌面会话的系统上，可执行不运行 Agent 任务的窗口启动检查：
 

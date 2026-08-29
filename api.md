@@ -8,6 +8,14 @@ The local server binds to `127.0.0.1` by default. All task execution remains in 
 python web_server.py --demo --workspace .
 ```
 
+运行限制可直接覆盖环境变量默认值，例如：
+
+```powershell
+python web_server.py --workspace . --model-timeout 90 --timeout 45 --approval-timeout 180 --min-request-interval 250
+```
+
+`--min-request-interval 0` 会关闭额外的进程内模型请求间隔限制。
+
 ## Endpoints
 
 | Method | Path | Purpose |

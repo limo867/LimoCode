@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-from dataclasses import replace
 from pathlib import Path
 import subprocess
 import sys
@@ -69,10 +68,20 @@ class AgentWindow:
         self.timeout.delete(0, tk.END)
         self.timeout.insert(0, str(config.command_timeout))
         self.timeout.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Approval wait (s)").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        self.approval_timeout = tk.Spinbox(controls, from_=1, to=3600, width=7)
+        self.approval_timeout.delete(0, tk.END)
+        self.approval_timeout.insert(0, str(config.command_approval_timeout))
+        self.approval_timeout.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        tk.Label(controls, text="Request gap (ms)").grid(row=4, column=2, sticky="e", pady=(8, 0))
+        self.request_interval = tk.Spinbox(controls, from_=0, to=600000, width=9)
+        self.request_interval.delete(0, tk.END)
+        self.request_interval.insert(0, str(config.model_min_request_interval_ms))
+        self.request_interval.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
         self.start_button = tk.Button(controls, text="Start", command=self.start)
-        self.start_button.grid(row=3, column=4, pady=(8, 0))
+        self.start_button.grid(row=4, column=4, pady=(8, 0))
         self.stop_button = tk.Button(controls, text="Stop", command=self.stop, state=tk.DISABLED)
-        self.stop_button.grid(row=3, column=5, padx=(8, 0), pady=(8, 0))
+        self.stop_button.grid(row=4, column=5, padx=(8, 0), pady=(8, 0))
         controls.columnconfigure(1, weight=1)
         controls.columnconfigure(3, weight=1)
 
@@ -100,13 +109,14 @@ class AgentWindow:
 
     def _updated_config(self) -> Config:
         workspace = Path(self.workspace.get()).expanduser().resolve()
-        return replace(
-            self.config,
+        return self.config.with_overrides(
             workspace=workspace,
             model=self.model.get().strip() or self.config.model,
             model_timeout=int(self.model_timeout.get()),
             max_turns=int(self.max_turns.get()),
             command_timeout=int(self.timeout.get()),
+            command_approval_timeout=int(self.approval_timeout.get()),
+            model_min_request_interval_ms=int(self.request_interval.get()),
         )
 
     def choose_workspace(self) -> None:

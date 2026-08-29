@@ -1,5 +1,4 @@
 import argparse
-from dataclasses import replace
 
 from coding_agent.config import Config
 from coding_agent.web import serve
@@ -14,13 +13,18 @@ def main() -> None:
     parser.add_argument("--model")
     parser.add_argument("--max-turns", type=int)
     parser.add_argument("--timeout", type=int, help="Command timeout in seconds")
+    parser.add_argument("--model-timeout", type=int, help="Model API timeout in seconds")
+    parser.add_argument("--approval-timeout", type=int, help="High-risk command approval timeout in seconds")
+    parser.add_argument("--min-request-interval", type=int, help="Minimum interval between model requests in milliseconds")
     args = parser.parse_args()
     config = Config.from_env(args.workspace)
-    config = replace(
-        config,
-        model=args.model or config.model,
-        max_turns=args.max_turns or config.max_turns,
-        command_timeout=args.timeout or config.command_timeout,
+    config = config.with_overrides(
+        model=args.model,
+        max_turns=args.max_turns,
+        command_timeout=args.timeout,
+        model_timeout=args.model_timeout,
+        command_approval_timeout=args.approval_timeout,
+        model_min_request_interval_ms=args.min_request_interval,
     )
     server = serve(config, args.host, args.port, demo=args.demo)
     try:
