@@ -10,6 +10,16 @@
 python main.py --demo "列出项目文件"
 ```
 
+### 推荐：终端交互界面
+
+本地交互使用终端优先的 Codex 风格 TUI：任务过程以连续事件流显示，可查看历史任务、调整运行配置，并在高风险命令出现时进行本地确认。
+
+```powershell
+python -m coding_agent.tui --demo --workspace .
+```
+
+启动后直接输入编程任务；输入 `/help` 查看命令。常用命令为：`/config` 查看或调整运行配置、`/history` 查看最近任务、`/open <任务 ID 前缀>` 重放历史事件、`/clear` 清屏，以及 `/quit` 退出。真实模型模式下，先配置 `LLM_API_KEY`，再省略 `--demo` 启动。
+
 运行全部检查：
 
 ```powershell
@@ -18,7 +28,7 @@ python main.py --demo "列出项目文件"
 
 常用 CLI 参数：`--workspace`、`--model`、`--model-timeout`、`--max-turns`、`--timeout`、`--approval-timeout`、`--min-request-interval`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
 
-危险命令默认不会执行。需要预先放行的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。未在该列表中的高风险命令会在 Web 与桌面 GUI 中请求本地人工确认；拒绝、取消或超过 `AGENT_COMMAND_APPROVAL_TIMEOUT`（默认 120 秒）都不会执行命令。
+危险命令默认不会执行。需要预先放行的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。未在该列表中的高风险命令会在 TUI、Web 与桌面 GUI 中请求本地人工确认；拒绝、取消或超过 `AGENT_COMMAND_APPROVAL_TIMEOUT`（默认 120 秒）都不会执行命令。
 
 当同一服务进程需要并发执行真实模型任务时，可设置 `LLM_MIN_REQUEST_INTERVAL_MS` 为相邻模型请求的最小间隔（毫秒）。默认值 `0` 表示不额外限流；限流等待会显示为任务事件，并能响应任务取消。
 
@@ -43,16 +53,11 @@ python main.py --workspace . "检查并修复测试"
 - `coding_agent/agent.py`：模型客户端接口和 Agent 循环
 - `main.py`：命令行入口
 - `coding_agent/service.py`：任务服务、事件和取消
+- `coding_agent/tui.py`：推荐的终端交互入口
 - `coding_agent/web.py`、`web_server.py`：本地 Web API、SSE 和静态前端
-- `coding_agent/gui.py`：tkinter 桌面入口
+- `coding_agent/gui.py`：保留的 tkinter 桌面入口
 - `frontend/index.html`：浏览器界面
 - `current-status-roadmap.md`：当前功能盘点、限制与后续路线
-
-## 后续步骤
-
-1. 增加应用服务层和统一事件模型，为 Web 与桌面 GUI 复用。
-2. 实现本地 Web API、实时事件流和 Web 前端。
-3. 增加桌面 GUI，并持续完善日志、文档和演示。
 
 启动 Web 界面：
 
@@ -62,13 +67,13 @@ python web_server.py --demo --workspace .
 
 `web_server.py` 支持与 CLI 一致的 `--workspace`、`--model`、`--model-timeout`、`--max-turns`、`--timeout`、`--approval-timeout` 和 `--min-request-interval` 配置参数。所选工作区及其运行限制会应用到该本地进程服务的全部浏览器任务。
 
-启动桌面 GUI（需要系统提供 tkinter）：
+启动保留的桌面 GUI（需要系统提供 tkinter）：
 
 ```powershell
 python -m coding_agent.gui --demo --workspace .
 ```
 
-桌面 GUI 在任务开始前提供与 CLI/Web 一致的工作区、模型、API 超时、轮数、命令超时、危险命令审批等待时间和模型请求间隔设置。事件日志、命令输出、文件变更预览和最终答复显示在独立视图中。
+桌面 GUI 是可选入口；日常本地使用建议优先使用 TUI。桌面 GUI 在任务开始前提供与 CLI/Web 一致的工作区、模型、API 超时、轮数、命令超时、危险命令审批等待时间和模型请求间隔设置。事件日志、命令输出、文件变更预览和最终答复显示在独立视图中。
 
 在具有图形桌面会话的系统上，可执行不运行 Agent 任务的窗口启动检查：
 
