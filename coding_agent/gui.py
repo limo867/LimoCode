@@ -1,16 +1,33 @@
 """Desktop GUI backed by AgentService, without duplicating agent logic."""
 
 import argparse
+import json
 import os
 from dataclasses import replace
 from pathlib import Path
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import filedialog, scrolledtext
+from tkinter import filedialog, scrolledtext, ttk
 
 from .config import Config
 from .service import AgentService
+
+
+def tool_result_view(tool: str, result: dict[str, object]) -> tuple[str, str] | None:
+    """Return the GUI view and bounded display text for a completed tool."""
+    if tool == "run_command":
+        title = f"$ {result.get('command', '')}".rstrip()
+        details = result.get("output") or result.get("error") or "Command completed without output."
+        suffix = f"\nExit code: {result['returncode']}" if "returncode" in result else ""
+        return "commands", f"{title}\n{details}{suffix}\n\n"
+    if tool == "write_file":
+        path = result.get("path", "(unknown path)")
+        before = result.get("previous_preview") or "(new file)"
+        after = result.get("content_preview") or ""
+        state = "changed" if result.get("changed") else "unchanged"
+        return "changes", f"{path} ({state})\n--- before\n{before}\n+++ after\n{after}\n\n"
+    return None
 
 
 class AgentWindow:
@@ -70,9 +87,15 @@ class AgentWindow:
         panes = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED)
         panes.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         self.events = scrolledtext.ScrolledText(panes, state=tk.DISABLED, wrap=tk.WORD, width=58)
-        self.result = scrolledtext.ScrolledText(panes, state=tk.DISABLED, wrap=tk.WORD, width=58)
         panes.add(self.events, minsize=300)
-        panes.add(self.result, minsize=300)
+        self.views = ttk.Notebook(panes)
+        self.commands = scrolledtext.ScrolledText(self.views, state=tk.DISABLED, wrap=tk.WORD, width=58)
+        self.changes = scrolledtext.ScrolledText(self.views, state=tk.DISABLED, wrap=tk.WORD, width=58)
+        self.result = scrolledtext.ScrolledText(self.views, state=tk.DISABLED, wrap=tk.WORD, width=58)
+        self.views.add(self.commands, text="Command output")
+        self.views.add(self.changes, text="File changes")
+        self.views.add(self.result, text="Final answer")
+        panes.add(self.views, minsize=360)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
     def _updated_config(self) -> Config:
@@ -114,6 +137,7 @@ class AgentWindow:
         for event in self.service.events(self.record.id, self.last_sequence):
             self.last_sequence = event.sequence
             self._append(self.events, f"[{event.type}]\n{event.data}\n\n")
+            self._route_event(event.type, event.data)
         if self.record.status in {"completed", "failed", "cancelled"}:
             self._append(self.result, self.record.result or self.record.error or "No final result.")
             colour = "#14804a" if self.record.status == "completed" else "#a33131"
@@ -134,11 +158,29 @@ class AgentWindow:
         widget.see(tk.END)
         widget.configure(state=tk.DISABLED)
 
+    def _route_event(self, event_type: str, data: dict[str, object]) -> None:
+        if event_type == "tool_finished":
+            tool = data.get("tool")
+            result = data.get("result")
+            if isinstance(tool, str) and isinstance(result, dict):
+                view = tool_result_view(tool, result)
+                if view:
+                    target, text = view
+                    widget = self.commands if target == "commands" else self.changes
+                    self._append(widget, text)
+                    self.views.select(widget)
+        elif event_type in {"assistant_message", "task_finished", "task_error", "task_cancelled"}:
+            final = data.get("content") or data.get("result") or data.get("error")
+            if final:
+                self._append(self.result, str(final) if isinstance(final, str) else json.dumps(final, ensure_ascii=False, indent=2))
+                self.views.select(self.result)
+
     def clear(self) -> None:
-        for widget in (self.events, self.result):
+        for widget in (self.events, self.commands, self.changes, self.result):
             widget.configure(state=tk.NORMAL)
             widget.delete("1.0", tk.END)
             widget.configure(state=tk.DISABLED)
+        self.views.select(self.result)
 
     def copy_result(self) -> None:
         text = self.result.get("1.0", tk.END).strip()

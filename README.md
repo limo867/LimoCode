@@ -66,7 +66,7 @@ python web_server.py --demo --workspace .
 python -m coding_agent.gui --demo --workspace .
 ```
 
-The desktop GUI exposes the same workspace, model, API timeout, turn limit, and command timeout settings before a task starts.
+The desktop GUI exposes the same workspace, model, API timeout, turn limit, and command timeout settings before a task starts. Its event log, command output, file-change preview, and final answer are shown in separate views.
 
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
 
