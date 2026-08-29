@@ -23,7 +23,7 @@
     .event.tool_started { border-color: #f59e0b; } .event.tool_finished { border-color: #10b981; }
     .event.task_error { border-color: #ef4444; } .event.assistant_message, .event.task_finished { border-color: #60a5fa; }
     .event strong { display: block; font-size: .82rem; margin-bottom: 4px; }
-    .event .meta { color: #9ca3af; font-size: .78rem; } pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; color: #d1d5db; }
+    .event .meta { color: #9ca3af; font-size: .78rem; } pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-height: 220px; overflow: auto; color: #d1d5db; }
     details { margin-top: 7px; color: #d1d5db; } summary { cursor: pointer; color: #93c5fd; }
     .history { max-height: 65vh; overflow: auto; } .history button { width: 100%; text-align: left; margin-bottom: 7px; background: #374151; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; }
     .approval { margin-top: 8px; display: flex; gap: 8px; } .approval button { padding: 6px 10px; font-size: .78rem; } .approval .deny { background: #991b1b; }
@@ -48,7 +48,7 @@
     const task = document.querySelector('#task'), demo = document.querySelector('#demo'), start = document.querySelector('#start'), stop = document.querySelector('#stop'), status = document.querySelector('#status'), meta = document.querySelector('#meta'), timeline = document.querySelector('#timeline');
     let taskId = null, source = null, lastEvent = 0, seen = new Set();
     async function loadHistory() { const response = await fetch('/api/tasks'); if (!response.ok) return; const data = await response.json(); const panel = document.querySelector('#history'); panel.innerHTML = ''; if (!data.tasks.length) { panel.textContent = '暂无任务'; return; } data.tasks.forEach(item => { const button = document.createElement('button'); button.textContent = `${item.status} · ${item.task}`; button.onclick = () => openTask(item.id); panel.appendChild(button); }); }
-    async function openTask(id) { taskId = id; lastEvent = 0; seen = new Set(); timeline.innerHTML = ''; status.textContent = '加载中'; const response = await fetch(`/api/tasks/${id}`); const record = await response.json(); meta.textContent = `任务 ${id.slice(0, 8)}`; if (record.status === 'completed') status.textContent = '已完成'; connectEvents(); }
+    async function openTask(id) { taskId = id; lastEvent = 0; seen = new Set(); timeline.innerHTML = ''; status.textContent = '加载中'; const response = await fetch(`/api/tasks/${id}`); const record = await response.json(); task.value = record.task || ''; meta.textContent = `任务 ${id.slice(0, 8)}`; if (record.status === 'completed') status.textContent = '已完成'; connectEvents(); }
     function connectEvents() { if (source) source.close(); source = new EventSource(`/api/tasks/${taskId}/events?after=${lastEvent}`); source.onmessage = event => { const payload = JSON.parse(event.data); if (seen.has(payload.id)) return; seen.add(payload.id); lastEvent = Math.max(lastEvent, payload.sequence || 0); addEvent(payload); status.textContent = payload.type === 'task_finished' ? '已完成' : payload.type === 'task_error' ? '失败' : payload.type === 'task_cancelled' ? '已停止' : '运行中'; if (['task_finished','task_error','task_cancelled'].includes(payload.type)) finish(); }; source.onerror = () => { if (source && source.readyState === EventSource.CLOSED && taskId) setTimeout(connectEvents, 1000); }; }
     function appendText(parent, value) { const pre = document.createElement('pre'); pre.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); parent.appendChild(pre); }
     function addEvent(event) {
@@ -95,7 +95,12 @@
       } catch (error) { status.textContent = error.message; finish(); }
     };
     stop.onclick = async () => { if (taskId) await fetch(`/api/tasks/${taskId}`, {method: 'DELETE'}); status.textContent = '正在停止'; stop.disabled = true; };
-    loadHistory();
+    async function initialize() {
+      await loadHistory();
+      const selectedTask = new URLSearchParams(window.location.search).get('task');
+      if (selectedTask) openTask(selectedTask);
+    }
+    initialize();
   </script>
 </body>
 </html>

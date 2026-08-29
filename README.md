@@ -75,6 +75,15 @@ The desktop GUI exposes the same workspace, model, API timeout, turn limit, and 
 Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线重连；事件详情中的工具参数和命令输出可展开查看。
 文件写入事件还会展示受限的修改前后预览；大文件只显示截断内容。
 
+## Web 展示截图
+
+下列截图使用本机 Edge 无头模式运行离线 Demo 任务后生成，不包含 API Key 或真实模型数据：
+
+- [桌面布局（1440 x 900）](examples/web-demo-desktop.png)
+- [窄屏布局（390 x 844）](examples/web-demo-mobile.png)
+
+浏览器可使用 `?task=<task-id>` 直接打开历史任务，便于展示事件时间线和最终结果。
+
 Web API 文档见 `api.md`。GitHub Actions 会在推送和拉取请求时运行测试与编译检查。
 
 真实模型演示的去敏录制步骤见 `examples/real-model-demo.md`。录制产物默认不会被 Git 跟踪。
