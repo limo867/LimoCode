@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-codex-agent"
+version = "0.1.0"
+description = "A terminal-first local coding agent"
+requires-python = ">=3.10"
+
+[project.scripts]
+local-codex = "coding_agent.tui:main"
+
+[tool.setuptools]
+packages = ["coding_agent"]

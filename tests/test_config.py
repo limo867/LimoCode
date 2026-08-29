@@ -1,5 +1,8 @@
 import unittest
+import os
 from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 from coding_agent.config import Config
 
@@ -17,6 +20,19 @@ class ConfigOverrideTests(unittest.TestCase):
         original = Config(workspace=Path("old"))
         updated = original.with_overrides(workspace=Path("new"))
         self.assertEqual(updated.workspace, Path("new"))
+
+    def test_loads_workspace_dotenv_without_overriding_process_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            (workspace / ".env").write_text(
+                "LLM_API_KEY=local-key\nLLM_MODEL=dotenv-model\nLLM_TIMEOUT=90\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"LLM_MODEL": "process-model"}, clear=True):
+                config = Config.from_env(str(workspace))
+        self.assertEqual(config.api_key, "local-key")
+        self.assertEqual(config.model, "process-model")
+        self.assertEqual(config.model_timeout, 90)
 
 
 if __name__ == "__main__":

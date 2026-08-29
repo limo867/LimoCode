@@ -20,6 +20,39 @@ python -m coding_agent.tui --demo --workspace .
 
 启动后直接输入编程任务；输入 `/help` 查看命令。常用命令为：`/config` 查看或调整运行配置、`/history` 查看最近任务、`/open <任务 ID 前缀>` 重放历史事件、`/clear` 清屏，以及 `/quit` 退出。真实模型模式下，先配置 `LLM_API_KEY`，再省略 `--demo` 启动。
 
+### 一次性配置真实模型
+
+将 [`.env.example`](.env.example) 复制为工作区根目录的 `.env`，填入自己的 Key；程序会自动读取它，且 `.env` 已被 Git 忽略。显式设置的系统环境变量优先于 `.env`，适合临时切换模型。
+
+```dotenv
+LLM_API_KEY=你的真实密钥
+LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://api.openai.com/v1
+```
+
+之后每次直接运行即可：
+
+```powershell
+python -m coding_agent.tui --workspace .
+```
+
+### 任意目录启动
+
+在项目目录执行一次安装：
+
+```powershell
+python -m pip install -e .
+```
+
+之后可以在任意目录直接启动；未传入 `--workspace` 时，当前目录就是 Agent 的工作区：
+
+```powershell
+cd D:\你的项目
+local-codex
+```
+
+若要使用另一个工作区，可显式指定：`local-codex --workspace D:\另一个项目`。
+
 运行全部检查：
 
 ```powershell
