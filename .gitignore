@@ -3,3 +3,5 @@ __pycache__/
 .env
 .venv/
 .coding-agent-demo/
+.coding-agent/
+examples/real-model-transcript.json

@@ -75,6 +75,8 @@ Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线�
 
 Web API 文档见 `api.md`。GitHub Actions 会在推送和拉取请求时运行测试与编译检查。
 
+真实模型演示的去敏录制步骤见 `examples/real-model-demo.md`。录制产物默认不会被 Git 跟踪。
+
 运行基础测试：
 
 ```powershell
