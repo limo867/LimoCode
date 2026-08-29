@@ -89,11 +89,7 @@ class AgentService:
             self._tasks[record.id] = record
             if self.store:
                 self.store.save_task(record.snapshot())
-            if len(self._tasks) > self.max_tasks:
-                finished = [item for item in self._tasks.values() if item.status in {"completed", "failed", "cancelled"} and item.id != record.id]
-                count = len(self._tasks) - self.max_tasks
-                for old in sorted(finished, key=lambda item: item.created_at)[:count]:
-                    self._tasks.pop(old.id, None)
+            self._trim_tasks_locked(exclude_id=record.id)
         record.thread = Thread(target=self._run, args=(record, demo), name=f"agent-{record.id[:8]}", daemon=True)
         record.thread.start()
         return record
@@ -129,8 +125,10 @@ class AgentService:
         try:
             with self._lock:
                 record.transition("running")
-            if self.store:
-                self.store.save_task(record.snapshot())
+            with self._lock:
+                if self.store:
+                    self.store.save_task(record.snapshot())
+                self._trim_tasks_locked()
             model = self.model_factory(self.config, demo)
             agent = Agent(self.config, model=model, event_callback=emit, is_cancelled=record.cancelled.is_set)
             record.result = agent.run(record.task)
@@ -147,8 +145,10 @@ class AgentService:
                 with self._lock:
                     record.transition("completed")
                 self._emit(record, "task_finished", {"result": record.result, "status": agent.last_status})
-            if self.store:
-                self.store.save_task(record.snapshot())
+            with self._lock:
+                if self.store:
+                    self.store.save_task(record.snapshot())
+                self._trim_tasks_locked()
         except Exception as exc:
             with self._lock:
                 if record.status in {"queued", "running"}:
@@ -166,3 +166,18 @@ class AgentService:
             record.events.append(event)
             if self.store:
                 self.store.save_event(event)
+
+    def _trim_tasks_locked(self, *, exclude_id: str | None = None) -> None:
+        """Keep bounded completed history without discarding active work."""
+        excess = len(self._tasks) - self.max_tasks
+        if excess <= 0:
+            return
+        finished = [
+            record
+            for record in self._tasks.values()
+            if record.status in {"completed", "failed", "cancelled"} and record.id != exclude_id
+        ]
+        for record in sorted(finished, key=lambda item: item.created_at)[:excess]:
+            self._tasks.pop(record.id, None)
+            if self.store:
+                self.store.delete_task(record.id)

@@ -71,6 +71,13 @@ class TaskStore:
             rows = self._connection.execute("SELECT id, task_id, sequence, timestamp, type, data FROM events WHERE task_id = ? ORDER BY sequence", (task_id,)).fetchall()
         return [AgentEvent(type=row["type"], task_id=row["task_id"], data=json.loads(row["data"]), sequence=row["sequence"], id=row["id"], timestamp=row["timestamp"]) for row in rows]
 
+    def delete_task(self, task_id: str) -> None:
+        """Remove a pruned task together with its persisted public events."""
+        with self._lock:
+            self._connection.execute("DELETE FROM events WHERE task_id = ?", (task_id,))
+            self._connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            self._connection.commit()
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()
