@@ -4,6 +4,7 @@ import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 import tempfile
+import time
 
 from coding_agent.config import Config
 from coding_agent.service import AgentService
@@ -45,8 +46,23 @@ class WebApiTests(unittest.TestCase):
             status, body = self.request("GET", f"/api/tasks/{task_id}")
             if json.loads(body)["status"] == "completed":
                 break
+            time.sleep(0.05)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["status"], "completed")
+
+    def test_tasks_list_and_event_sequence(self):
+        status, body = self.request("POST", "/api/tasks", {"task": "demo", "demo": True})
+        task_id = json.loads(body)["id"]
+        for _ in range(20):
+            time.sleep(0.05)
+            record = ApiHandler.service.get_task(task_id)
+            if record.status == "completed":
+                break
+        status, body = self.request("GET", "/api/tasks")
+        self.assertEqual(status, 200)
+        self.assertTrue(any(item["id"] == task_id for item in json.loads(body)["tasks"]))
+        events = ApiHandler.service.events(task_id)
+        self.assertEqual([event.sequence for event in events], list(range(1, len(events) + 1)))
 
 
 if __name__ == "__main__":

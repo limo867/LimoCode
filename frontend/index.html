@@ -11,7 +11,7 @@
     header { padding: 22px 5vw 16px; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; align-items: baseline; }
     h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0; }
     .subtle { color: #9ca3af; font-size: .85rem; }
-    main { max-width: 1180px; margin: 0 auto; padding: 24px 5vw; display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 24px; }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px 5vw; display: grid; grid-template-columns: 220px minmax(260px, 360px) 1fr; gap: 18px; }
     section { border: 1px solid #374151; background: #1f2937; border-radius: 8px; padding: 18px; }
     label { display: block; font-size: .82rem; color: #9ca3af; margin: 0 0 8px; }
     textarea { width: 100%; min-height: 150px; resize: vertical; background: #111827; color: #f9fafb; border: 1px solid #4b5563; border-radius: 6px; padding: 12px; font: inherit; }
@@ -24,12 +24,15 @@
     .event.task_error { border-color: #ef4444; } .event.assistant_message, .event.task_finished { border-color: #60a5fa; }
     .event strong { display: block; font-size: .82rem; margin-bottom: 4px; }
     pre { margin: 6px 0 0; white-space: pre-wrap; max-height: 220px; overflow: auto; color: #d1d5db; }
-    @media (max-width: 760px) { main { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 5px; flex-direction: column; } }
+    .history { max-height: 65vh; overflow: auto; } .history button { width: 100%; text-align: left; margin-bottom: 7px; background: #374151; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; }
+    @media (max-width: 980px) { main { grid-template-columns: 190px 1fr; } main > section:nth-child(2) { grid-column: 1 / -1; } }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; } header { align-items: flex-start; gap: 5px; flex-direction: column; } .history { max-height: 180px; } }
   </style>
 </head>
 <body>
   <header><h1>Local Coding Agent</h1><span id="status" class="subtle">就绪</span></header>
   <main>
+    <section class="history"><label>任务历史</label><div id="history" class="subtle">暂无任务</div></section>
     <section>
       <label for="task">编程任务</label>
       <textarea id="task" placeholder="例如：检查项目测试并修复失败项"></textarea>
@@ -41,7 +44,10 @@
   </main>
   <script>
     const task = document.querySelector('#task'), demo = document.querySelector('#demo'), start = document.querySelector('#start'), stop = document.querySelector('#stop'), status = document.querySelector('#status'), meta = document.querySelector('#meta'), timeline = document.querySelector('#timeline');
-    let taskId = null, source = null;
+    let taskId = null, source = null, lastEvent = 0, seen = new Set();
+    async function loadHistory() { const response = await fetch('/api/tasks'); if (!response.ok) return; const data = await response.json(); const panel = document.querySelector('#history'); panel.innerHTML = ''; if (!data.tasks.length) { panel.textContent = '暂无任务'; return; } data.tasks.forEach(item => { const button = document.createElement('button'); button.textContent = `${item.status} · ${item.task}`; button.onclick = () => openTask(item.id); panel.appendChild(button); }); }
+    async function openTask(id) { taskId = id; lastEvent = 0; seen = new Set(); timeline.innerHTML = ''; status.textContent = '加载中'; const response = await fetch(`/api/tasks/${id}`); const record = await response.json(); meta.textContent = `任务 ${id.slice(0, 8)}`; if (record.status === 'completed') status.textContent = '已完成'; connectEvents(); }
+    function connectEvents() { if (source) source.close(); source = new EventSource(`/api/tasks/${taskId}/events?after=${lastEvent}`); source.onmessage = event => { const payload = JSON.parse(event.data); if (seen.has(payload.id)) return; seen.add(payload.id); lastEvent = Math.max(lastEvent, payload.sequence || 0); addEvent(payload); status.textContent = payload.type === 'task_finished' ? '已完成' : payload.type === 'task_error' ? '失败' : payload.type === 'task_cancelled' ? '已停止' : '运行中'; if (['task_finished','task_error','task_cancelled'].includes(payload.type)) finish(); }; source.onerror = () => { if (source && source.readyState === EventSource.CLOSED && taskId) setTimeout(connectEvents, 1000); }; }
     function addEvent(event) {
       if (timeline.querySelector('.subtle')) timeline.innerHTML = '';
       const item = document.createElement('div'); item.className = `event ${event.type}`;
@@ -58,12 +64,11 @@
         const response = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: task.value, demo: demo.checked}) });
         const record = await response.json(); if (!response.ok) throw new Error(record.error || '创建失败');
         taskId = record.id; meta.textContent = `任务 ${taskId.slice(0, 8)}`; status.textContent = '运行中'; stop.disabled = false;
-        source = new EventSource(`/api/tasks/${taskId}/events`);
-        source.onmessage = event => { const payload = JSON.parse(event.data); addEvent(payload); status.textContent = payload.type === 'task_finished' ? '已完成' : payload.type === 'task_error' ? '失败' : payload.type === 'task_cancelled' ? '已停止' : '运行中'; if (['task_finished','task_error','task_cancelled'].includes(payload.type)) finish(); };
-        source.onerror = () => { if (source && source.readyState === EventSource.CLOSED) { status.textContent = '连接结束'; finish(); } };
+        connectEvents(); loadHistory();
       } catch (error) { status.textContent = error.message; finish(); }
     };
     stop.onclick = async () => { if (taskId) await fetch(`/api/tasks/${taskId}`, {method: 'DELETE'}); status.textContent = '正在停止'; stop.disabled = true; };
+    loadHistory();
   </script>
 </body>
 </html>

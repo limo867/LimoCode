@@ -35,3 +35,11 @@ class ServiceTests(unittest.TestCase):
         payload = event.to_dict()
         self.assertEqual(payload["type"], "task_started")
         self.assertEqual(payload["task_id"], "abc")
+
+    def test_events_can_resume_from_sequence(self):
+        service = AgentService(self.config)
+        record = service.create_task("list files", demo=True)
+        record.thread.join(timeout=3)
+        events = service.events(record.id)
+        self.assertGreaterEqual(len(events), 2)
+        self.assertEqual(service.events(record.id, after=2)[0].sequence, 3)

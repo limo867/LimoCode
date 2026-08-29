@@ -17,6 +17,32 @@ class DemoModel:
         return {"role": "assistant", "content": "离线演示模式已启动。真实模型模式需要配置 LLM_API_KEY。"}
 
 
+class DemoModel:
+    """Deterministic local model used to demonstrate the complete tool loop offline."""
+
+    @staticmethod
+    def _tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [message for message in messages if message.get("role") == "tool"]
+
+    def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+        tool_messages = self._tool_messages(messages)
+        if not tool_messages:
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": "demo-list", "name": "list_files", "arguments": "{}"}]}
+        if len(tool_messages) == 1:
+            files = tool_messages[-1].get("content", {}).get("files", [])
+            path = next((item for item in files if item.lower().endswith((".md", ".txt", ".py"))), "README.md")
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": "demo-read", "name": "read_file", "arguments": json.dumps({"path": path})}]}
+        if len(tool_messages) == 2:
+            source = tool_messages[-1].get("content", {})
+            content = source.get("content", "") if isinstance(source, dict) else str(source)
+            report = "Coding Agent demo report\n\nRead source characters: " + str(len(content)) + "\n"
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": "demo-write", "name": "write_file", "arguments": json.dumps({"path": ".coding-agent-demo/result.txt", "content": report})}]}
+        if len(tool_messages) == 3:
+            command = "python -c \"from pathlib import Path; print(Path('.coding-agent-demo/result.txt').read_text())\""
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": "demo-run", "name": "run_command", "arguments": json.dumps({"command": command})}]}
+        return {"role": "assistant", "content": "离线演示已完成：列出文件、读取文本、写入 .coding-agent-demo/result.txt，并执行命令验证了写入结果。"}
+
+
 class Agent:
     def __init__(
         self,

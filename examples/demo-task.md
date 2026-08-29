@@ -11,6 +11,8 @@
 3. Agent 使用 `run_command` 执行测试。
 4. Agent 根据命令结果继续修复或给出最终总结。
 
+DemoModel 会在工作区创建 `.coding-agent-demo/result.txt` 作为演示产物；该目录可在演示后删除。
+
 Web Demo：
 
 ```powershell

@@ -27,6 +27,7 @@ class TaskRecord:
     events: deque[AgentEvent] = field(default_factory=lambda: deque(maxlen=500))
     cancelled: Event = field(default_factory=Event, repr=False)
     thread: Thread | None = field(default=None, repr=False)
+    next_sequence: int = field(default=1, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class TaskRecord:
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at,
+            "event_count": len(self.events),
         }
 
 
@@ -47,6 +49,7 @@ class AgentService:
         self.model_factory = model_factory or self._default_model_factory
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = Lock()
+        self.max_tasks = 100
 
     @staticmethod
     def _default_model_factory(config: Config, demo: bool) -> ModelClient:
@@ -60,6 +63,11 @@ class AgentService:
         record = TaskRecord(id=uuid.uuid4().hex, task=task.strip())
         with self._lock:
             self._tasks[record.id] = record
+            if len(self._tasks) > self.max_tasks:
+                finished = [item for item in self._tasks.values() if item.status in {"completed", "failed", "cancelled"} and item.id != record.id]
+                count = len(self._tasks) - self.max_tasks
+                for old in sorted(finished, key=lambda item: item.created_at)[:count]:
+                    self._tasks.pop(old.id, None)
         record.thread = Thread(target=self._run, args=(record, demo), name=f"agent-{record.id[:8]}", daemon=True)
         record.thread.start()
         return record
@@ -68,11 +76,15 @@ class AgentService:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def list_tasks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [record.snapshot() for record in sorted(self._tasks.values(), key=lambda item: item.created_at, reverse=True)]
+
     def events(self, task_id: str, after: int = 0) -> list[AgentEvent]:
         record = self.get_task(task_id)
         if not record:
             return []
-        return list(record.events)[after:]
+        return [event for event in record.events if event.sequence > after]
 
     def cancel_task(self, task_id: str) -> bool:
         record = self.get_task(task_id)
@@ -107,4 +119,7 @@ class AgentService:
             self._emit(record, "task_error", {"error": record.error})
 
     def _emit(self, record: TaskRecord, event_type: str, data: dict[str, Any]) -> None:
-        record.events.append(AgentEvent(type=event_type, task_id=record.id, data=data))
+        with self._lock:
+            sequence = record.next_sequence
+            record.next_sequence += 1
+            record.events.append(AgentEvent(type=event_type, task_id=record.id, data=data, sequence=sequence))

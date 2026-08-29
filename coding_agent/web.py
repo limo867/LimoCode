@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import Config
 from .service import AgentService
@@ -44,6 +44,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             self._send_json(200, {"ok": True, "service": "coding-agent"})
             return
+        if parsed.path == "/api/tasks":
+            self._send_json(200, {"tasks": self.service.list_tasks()})
+            return
         parts = parsed.path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "tasks"] and parts[2]:
             record = self.service.get_task(parts[2])
@@ -70,15 +73,19 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        sent = 0
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            sent = max(0, int(query.get("after", ["0"])[0]))
+        except (TypeError, ValueError):
+            sent = 0
         while True:
             events = self.service.events(task_id, sent)
             for event in events:
                 payload = json.dumps(event.to_dict(), ensure_ascii=False)
                 self.wfile.write(f"id: {event.id}\ndata: {payload}\n\n".encode("utf-8"))
                 self.wfile.flush()
-                sent += 1
-            if record.status in {"completed", "failed", "cancelled"} and sent >= len(record.events):
+                sent = event.sequence
+            if record.status in {"completed", "failed", "cancelled"} and not self.service.events(task_id, sent):
                 break
             self.wfile.write(b": keep-alive\n\n")
             self.wfile.flush()

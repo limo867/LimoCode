@@ -36,6 +36,7 @@ python main.py --workspace . "检查并修复测试"
 - `coding_agent/web.py`、`web_server.py`：本地 Web API、SSE 和静态前端
 - `coding_agent/gui.py`：tkinter 桌面入口
 - `frontend/index.html`：浏览器界面
+- `current-status-roadmap.md`：当前功能盘点、限制与后续路线
 
 ## 后续步骤
 
@@ -56,6 +57,8 @@ python -m coding_agent.gui --demo --workspace .
 ```
 
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
+
+Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线重连；事件详情中的工具参数和命令输出可展开查看。
 
 运行基础测试：
 
