@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Event, Lock, Thread
+import time
 from typing import Any, Callable
 import uuid
 
@@ -18,6 +19,14 @@ ModelFactory = Callable[[Config, bool], ModelClient]
 
 
 @dataclass
+class ApprovalRequest:
+    id: str
+    command: str
+    resolved: Event = field(default_factory=Event, repr=False)
+    approved: bool | None = None
+
+
+@dataclass
 class TaskRecord:
     id: str
     task: str
@@ -29,6 +38,7 @@ class TaskRecord:
     cancelled: Event = field(default_factory=Event, repr=False)
     thread: Thread | None = field(default=None, repr=False)
     next_sequence: int = field(default=1, repr=False)
+    pending_approval: ApprovalRequest | None = field(default=None, repr=False)
 
     def transition(self, new_status: str) -> None:
         allowed = {
@@ -51,6 +61,11 @@ class TaskRecord:
             "error": self.error,
             "created_at": self.created_at,
             "event_count": len(self.events),
+            "approval": (
+                {"id": self.pending_approval.id, "command": self.pending_approval.command}
+                if self.pending_approval
+                else None
+            ),
         }
 
 
@@ -119,6 +134,18 @@ class AgentService:
         self._emit(record, "task_cancelling", {})
         return True
 
+    def approve_command(self, task_id: str, approval_id: str, approved: bool) -> bool:
+        record = self.get_task(task_id)
+        if not record or not isinstance(approved, bool):
+            return False
+        with self._lock:
+            request = record.pending_approval
+            if not request or request.id != approval_id or request.resolved.is_set():
+                return False
+            request.approved = approved
+            request.resolved.set()
+            return True
+
     def _run(self, record: TaskRecord, demo: bool) -> None:
         def emit(event_type: str, data: dict[str, Any]) -> None:
             self._emit(record, event_type, data)
@@ -137,6 +164,7 @@ class AgentService:
                 event_callback=emit,
                 is_cancelled=record.cancelled.is_set,
                 request_limiter=self._request_limiter,
+                command_approval=lambda command, cancelled: self._request_command_approval(record, command, cancelled),
             )
             record.result = agent.run(record.task)
             if record.cancelled.is_set() or agent.last_status == "cancelled":
@@ -173,6 +201,31 @@ class AgentService:
             record.events.append(event)
             if self.store:
                 self.store.save_event(event)
+
+    def _request_command_approval(
+        self,
+        record: TaskRecord,
+        command: str,
+        is_cancelled: Callable[[], bool],
+    ) -> str:
+        request = ApprovalRequest(id=uuid.uuid4().hex, command=command)
+        with self._lock:
+            record.pending_approval = request
+        self._emit(record, "command_approval_requested", {"approval_id": request.id, "command": command})
+        deadline = time.monotonic() + max(1, self.config.command_approval_timeout)
+        decision = "timed_out"
+        while time.monotonic() < deadline:
+            if is_cancelled():
+                decision = "cancelled"
+                break
+            if request.resolved.wait(0.1):
+                decision = "approved" if request.approved else "rejected"
+                break
+        with self._lock:
+            if record.pending_approval is request:
+                record.pending_approval = None
+        self._emit(record, "command_approval_resolved", {"approval_id": request.id, "command": command, "decision": decision})
+        return decision
 
     def _trim_tasks_locked(self, *, exclude_id: str | None = None) -> None:
         """Keep bounded completed history without discarding active work."""

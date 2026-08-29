@@ -80,6 +80,7 @@ class Agent:
         is_cancelled: Callable[[], bool] | None = None,
         sleeper: Callable[[float], None] | None = None,
         request_limiter: ModelRequestLimiter | None = None,
+        command_approval: Callable[[str, Callable[[], bool]], str] | None = None,
     ):
         self.config = config
         self.registry = ToolRegistry(config)
@@ -91,6 +92,7 @@ class Agent:
         self._is_cancelled = is_cancelled or (lambda: False)
         self._sleeper = sleeper or time.sleep
         self._request_limiter = request_limiter or ModelRequestLimiter(config.model_min_request_interval_ms)
+        self._command_approval = command_approval
 
     def run(self, task: str) -> str:
         self.messages = [
@@ -135,7 +137,16 @@ class Agent:
                 name = call.get("name", "") if isinstance(call, dict) else ""
                 arguments, error = self._parse_arguments(call.get("arguments") if isinstance(call, dict) else None)
                 self._emit("tool_started", {"turn": turn, "tool": name or "<invalid>", "arguments": self._argument_summary(arguments)})
-                result = {"ok": False, "error": error} if error else self.registry.execute(name, arguments, is_cancelled=self._is_cancelled)
+                result = (
+                    {"ok": False, "error": error}
+                    if error
+                    else self.registry.execute(
+                        name,
+                        arguments,
+                        is_cancelled=self._is_cancelled,
+                        request_approval=self._command_approval,
+                    )
+                )
                 self.execution_log.append(
                     {
                         "turn": turn,

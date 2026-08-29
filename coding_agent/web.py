@@ -144,7 +144,24 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self) -> None:
-        if self.path != "/api/tasks":
+        parsed = urlparse(self.path)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 5 and parts[:2] == ["api", "tasks"] and parts[3] == "approvals":
+            try:
+                body = self._body()
+                approved = body.get("approved")
+                if not isinstance(approved, bool):
+                    raise ValueError("approved must be a boolean")
+                accepted = self.service.approve_command(parts[2], parts[4], approved)
+            except (ValueError, json.JSONDecodeError) as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            if not accepted:
+                self._send_json(404, {"error": "approval not found or already resolved"})
+                return
+            self._send_json(202, {"ok": True, "status": "approval recorded"})
+            return
+        if parsed.path != "/api/tasks":
             self._send_json(404, {"error": "not found"})
             return
         try:

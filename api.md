@@ -15,6 +15,7 @@ python web_server.py --demo --workspace .
 | `GET` | `/api/health` | Server health check. |
 | `GET` | `/api/tasks?limit=N&offset=N` | Paginated task summaries (`limit` defaults to 50 and is capped at 100). |
 | `POST` | `/api/tasks` | Create a task. |
+| `POST` | `/api/tasks/{id}/approvals/{approval_id}` | Resolve a pending high-risk command approval. |
 | `GET` | `/api/tasks/{id}` | Get a task summary. |
 | `GET` | `/api/tasks/{id}/events?after=N` | SSE events after sequence `N`. |
 | `GET` | `/api/tasks/{id}/event-log?after=N&limit=N` | Bounded JSON event history for inspection or recovery. |
@@ -40,3 +41,5 @@ Tasks and events are persisted to the local SQLite path configured by `AGENT_HIS
 High-risk commands are rejected unless the local operator has added an exact match to `AGENT_APPROVED_COMMANDS`. This is a local whitelist, not an operating-system sandbox.
 
 Successful `write_file` results include bounded `previous_preview` and `content_preview` fields for UI diff displays.
+
+High-risk commands not present in `AGENT_APPROVED_COMMANDS` produce a `command_approval_requested` event. A local UI can send `{"approved": true}` or `{"approved": false}` to the approval endpoint. A request can be resolved exactly once; cancellation or the configured `AGENT_COMMAND_APPROVAL_TIMEOUT` rejects execution.

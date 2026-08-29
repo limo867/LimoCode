@@ -66,7 +66,13 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self.tools.values()]
 
-    def execute(self, name: str, arguments: dict[str, Any], is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        is_cancelled: Callable[[], bool] | None = None,
+        request_approval: Callable[[str, Callable[[], bool]], str] | None = None,
+    ) -> dict[str, Any]:
         tool = self.tools.get(name)
         if not tool:
             return {"ok": False, "error": f"unknown tool: {name}"}
@@ -82,7 +88,11 @@ class ToolRegistry:
             return {"ok": False, "error": f"missing required argument(s): {', '.join(missing)}"}
         try:
             if name == "run_command":
-                return tool.handler(**arguments, is_cancelled=is_cancelled or (lambda: False))
+                return tool.handler(
+                    **arguments,
+                    is_cancelled=is_cancelled or (lambda: False),
+                    request_approval=request_approval,
+                )
             return tool.handler(**arguments)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -143,13 +153,27 @@ class ToolRegistry:
             "preview_truncated": len(previous) > preview_limit or len(content) > preview_limit,
         }
 
-    def run_command(self, command: str, is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    def run_command(
+        self,
+        command: str,
+        is_cancelled: Callable[[], bool] | None = None,
+        request_approval: Callable[[str, Callable[[], bool]], str] | None = None,
+    ) -> dict[str, Any]:
         if not isinstance(command, str) or not command.strip():
             return {"ok": False, "error": "command must be a non-empty string"}
-        if self._is_dangerous(command) and command not in self.config.approved_commands:
-            return {"ok": False, "error": "command requires local approval", "requires_approval": True}
-        started = time.perf_counter()
         is_cancelled = is_cancelled or (lambda: False)
+        if self._is_dangerous(command) and command not in self.config.approved_commands:
+            if not request_approval:
+                return {"ok": False, "error": "command requires local approval", "requires_approval": True}
+            decision = request_approval(command, is_cancelled)
+            if decision != "approved":
+                return {
+                    "ok": False,
+                    "error": f"command approval {decision}",
+                    "requires_approval": True,
+                    "approval_status": decision,
+                }
+        started = time.perf_counter()
         try:
             process = subprocess.Popen(command, cwd=self.workspace.root, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as exc:

@@ -17,6 +17,7 @@ class Config:
     model_min_request_interval_ms: int = 0
     max_turns: int = 12
     command_timeout: int = 30
+    command_approval_timeout: int = 120
     max_output_chars: int = 12000
     max_file_chars: int = 200000
     max_history_messages: int = 30
@@ -40,6 +41,7 @@ class Config:
             model_min_request_interval_ms=int(os.getenv("LLM_MIN_REQUEST_INTERVAL_MS", "0")),
             max_turns=int(os.getenv("AGENT_MAX_TURNS", "12")),
             command_timeout=int(os.getenv("AGENT_COMMAND_TIMEOUT", "30")),
+            command_approval_timeout=int(os.getenv("AGENT_COMMAND_APPROVAL_TIMEOUT", "120")),
             max_output_chars=int(os.getenv("AGENT_MAX_OUTPUT_CHARS", "12000")),
             max_file_chars=int(os.getenv("AGENT_MAX_FILE_CHARS", "200000")),
             max_history_messages=int(os.getenv("AGENT_MAX_HISTORY_MESSAGES", "30")),

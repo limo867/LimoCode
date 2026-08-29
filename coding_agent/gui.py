@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from .config import Config
 from .service import AgentService
@@ -159,7 +159,16 @@ class AgentWindow:
         widget.configure(state=tk.DISABLED)
 
     def _route_event(self, event_type: str, data: dict[str, object]) -> None:
-        if event_type == "tool_finished":
+        if event_type == "command_approval_requested":
+            approval_id, command = data.get("approval_id"), data.get("command")
+            if self.record and isinstance(approval_id, str) and isinstance(command, str):
+                approved = messagebox.askyesno(
+                    "Approve command",
+                    f"The agent requested a high-risk command:\n\n{command}\n\nRun it in the selected workspace?",
+                    parent=self.root,
+                )
+                self.service.approve_command(self.record.id, approval_id, approved)
+        elif event_type == "tool_finished":
             tool = data.get("tool")
             result = data.get("result")
             if isinstance(tool, str) and isinstance(result, dict):

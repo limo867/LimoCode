@@ -93,6 +93,38 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("limit", json.loads(body)["error"])
 
+    def test_command_approval_endpoint_resolves_pending_request(self):
+        class ApprovalModel:
+            def __init__(self):
+                self.turn = 0
+
+            def complete(self, messages, tools):
+                self.turn += 1
+                if self.turn == 1:
+                    return {"content": "", "tool_calls": [{"name": "run_command", "arguments": '{"command": "shutdown /?"}'}]}
+                return {"content": "approval handled"}
+
+        ApiHandler.service = AgentService(
+            Config(workspace=Path(self.temp_dir.name), command_approval_timeout=3),
+            model_factory=lambda _config, _demo: ApprovalModel(),
+        )
+        status, body = self.request("POST", "/api/tasks", {"task": "approval"})
+        task_id = json.loads(body)["id"]
+        approval = None
+        for _ in range(30):
+            events = ApiHandler.service.events(task_id)
+            requests = [event for event in events if event.type == "command_approval_requested"]
+            if requests:
+                approval = requests[0]
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(approval)
+        status, body = self.request("POST", f"/api/tasks/{task_id}/approvals/{approval.data['approval_id']}", {"approved": False})
+        self.assertEqual(status, 202)
+        self.assertTrue(json.loads(body)["ok"])
+        status, _ = self.request("POST", f"/api/tasks/{task_id}/approvals/{approval.data['approval_id']}", {"approved": False})
+        self.assertEqual(status, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

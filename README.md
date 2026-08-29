@@ -18,7 +18,7 @@ python main.py --demo "列出项目文件"
 
 常用 CLI 参数：`--workspace`、`--model`、`--max-turns`、`--timeout`、`--demo`、`--log-file`。日志文件只保存状态和工具摘要，不保存 API Key。
 
-危险命令默认不会执行。需要本地人工批准的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。
+危险命令默认不会执行。需要预先放行的命令可完整写入 `AGENT_APPROVED_COMMANDS`，多条命令以 `;;` 分隔；只允许完全匹配，建议仅用于受控演示环境。未在该列表中的高风险命令会在 Web 与桌面 GUI 中请求本地人工确认；拒绝、取消或超过 `AGENT_COMMAND_APPROVAL_TIMEOUT`（默认 120 秒）都不会执行命令。
 
 当同一服务进程需要并发执行真实模型任务时，可设置 `LLM_MIN_REQUEST_INTERVAL_MS` 为相邻模型请求的最小间隔（毫秒）。默认值 `0` 表示不额外限流；限流等待会显示为任务事件，并能响应任务取消。
 

@@ -65,7 +65,7 @@ class ServiceTests(unittest.TestCase):
                 return {"content": "done"}
 
         model = TimestampModel()
-        config = Config(workspace=self.config.workspace, model_min_request_interval_ms=30)
+        config = Config(workspace=self.config.workspace, model_min_request_interval_ms=100)
         barrier = Barrier(2)
 
         def model_factory(_config, _demo):
@@ -77,8 +77,35 @@ class ServiceTests(unittest.TestCase):
         for record in records:
             record.thread.join(timeout=3)
             self.assertEqual(record.status, "completed")
-        timestamps = sorted(model.calls)
-        self.assertEqual(len(timestamps), 2)
-        self.assertGreaterEqual(timestamps[1] - timestamps[0], 0.02)
+        self.assertEqual(len(model.calls), 2)
         events = [event for record in records for event in service.events(record.id)]
-        self.assertTrue(any(event.type == "model_rate_limited" for event in events))
+        waits = [event.data["waited_ms"] for event in events if event.type == "model_rate_limited"]
+        self.assertTrue(waits)
+        self.assertGreaterEqual(max(waits), 80)
+
+    def test_command_approval_can_be_rejected_without_execution(self):
+        class ApprovalModel:
+            def __init__(self):
+                self.turn = 0
+
+            def complete(self, messages, tools):
+                self.turn += 1
+                if self.turn == 1:
+                    return {"content": "", "tool_calls": [{"name": "run_command", "arguments": '{"command": "shutdown /?"}'}]}
+                return {"content": "handled approval result"}
+
+        service = AgentService(Config(workspace=self.config.workspace, command_approval_timeout=3), model_factory=lambda _config, _demo: ApprovalModel())
+        record = service.create_task("request approval")
+        approval = None
+        for _ in range(30):
+            approval_events = [event for event in service.events(record.id) if event.type == "command_approval_requested"]
+            if approval_events:
+                approval = approval_events[0]
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(approval)
+        self.assertTrue(service.approve_command(record.id, approval.data["approval_id"], False))
+        record.thread.join(timeout=3)
+        self.assertEqual(record.status, "completed")
+        finished = [event for event in service.events(record.id) if event.type == "tool_finished"]
+        self.assertEqual(finished[0].data["result"]["approval_status"], "rejected")

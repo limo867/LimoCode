@@ -76,6 +76,16 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(result["requires_approval"])
         self.assertEqual(result["error"], "command requires local approval")
 
+    def test_approved_command_uses_local_approval_callback(self):
+        self.registry._is_dangerous = lambda _command: True
+        result = self.registry.execute(
+            "run_command",
+            {"command": "python -c \"print('approved')\""},
+            request_approval=lambda _command, _cancelled: "approved",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["output"].strip(), "approved")
+
 
 if __name__ == "__main__":
     unittest.main()
