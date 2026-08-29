@@ -67,6 +67,7 @@ python -m coding_agent.gui --demo --workspace .
 端到端演示任务见 `examples/demo-task.md`。Web API 默认监听 `127.0.0.1`，任务请求可通过 `demo: true` 使用离线模型。
 
 Web 页面现在包含任务历史、实时 SSE 事件、事件去重与断线重连；事件详情中的工具参数和命令输出可展开查看。
+文件写入事件还会展示受限的修改前后预览；大文件只显示截断内容。
 
 Web API 文档见 `api.md`。GitHub Actions 会在推送和拉取请求时运行测试与编译检查。
 

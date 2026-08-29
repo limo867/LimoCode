@@ -124,9 +124,24 @@ class ToolRegistry:
         target = self.workspace.resolve(path)
         if target.exists() and not target.is_file():
             return {"ok": False, "error": "path is not a regular file"}
+        previous = ""
+        if target.exists():
+            try:
+                previous = target.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return {"ok": False, "error": "existing file is not valid UTF-8 text"}
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": path, "bytes": len(content.encode("utf-8"))}
+        preview_limit = min(self.config.max_history_chars, 4000)
+        return {
+            "ok": True,
+            "path": path,
+            "bytes": len(content.encode("utf-8")),
+            "changed": previous != content,
+            "previous_preview": previous[:preview_limit],
+            "content_preview": content[:preview_limit],
+            "preview_truncated": len(previous) > preview_limit or len(content) > preview_limit,
+        }
 
     def run_command(self, command: str, is_cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
         if not isinstance(command, str) or not command.strip():

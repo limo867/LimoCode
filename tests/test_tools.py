@@ -21,6 +21,13 @@ class ToolRegistryTests(unittest.TestCase):
         read = self.registry.execute("read_file", {"path": "src/demo.txt"})
         self.assertEqual(read["content"], "hello")
 
+    def test_write_reports_bounded_change_preview(self):
+        self.registry.execute("write_file", {"path": "change.txt", "content": "before"})
+        result = self.registry.execute("write_file", {"path": "change.txt", "content": "after"})
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["previous_preview"], "before")
+        self.assertEqual(result["content_preview"], "after")
+
     def test_rejects_path_traversal(self):
         result = self.registry.execute("read_file", {"path": "../outside.txt"})
         self.assertFalse(result["ok"])
