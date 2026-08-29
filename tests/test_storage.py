@@ -86,6 +86,29 @@ class StorageTests(unittest.TestCase):
             self.assertEqual([event.sequence for event in second.events(record.id, after=499, limit=3)], [500, 501, 502])
             second.store.close()
 
+    def test_concurrent_persisted_tasks_survive_restart(self):
+        class FastModel:
+            def complete(self, messages, tools):
+                return {"content": "done"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = Config(workspace=root, history_db=root / "state.sqlite3")
+            first = AgentService(config, model_factory=lambda _config, _demo: FastModel())
+            records = [first.create_task(f"stress task {index}") for index in range(20)]
+            for record in records:
+                record.thread.join(timeout=5)
+                self.assertEqual(record.status, "completed")
+                events = first.events(record.id)
+                self.assertEqual([event.sequence for event in events], list(range(1, len(events) + 1)))
+            task_ids = {record.id for record in records}
+            first.store.close()
+
+            second = AgentService(config)
+            self.assertEqual({item["id"] for item in second.list_tasks()}, task_ids)
+            self.assertTrue(all(second.get_task(task_id).status == "completed" for task_id in task_ids))
+            second.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
