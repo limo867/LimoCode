@@ -10,6 +10,7 @@ README.txt
 .coding-agent-demo/
 .coding-agent/
 .local-dev/
+examples/
 frontend/node_modules/
 frontend/dist/
 test_*.log
