@@ -4,6 +4,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .env
+README.txt
 .venv/
 *.egg-info/
 .coding-agent-demo/
