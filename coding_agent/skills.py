@@ -33,11 +33,13 @@ class SkillManager:
     def default_roots(cls, workspace: Path) -> list[Path]:
         package_root = Path(__file__).resolve().parent / "default_skills"
         try:
-            user_root = Path.home() / ".local-codex" / "skills"
+            user_root = Path.home() / ".limocode" / "skills"
+            legacy_root = Path.home() / ".local-codex" / "skills"
         except RuntimeError:
-            user_root = Path(".local-codex") / "skills"
+            user_root = Path(".limocode") / "skills"
+            legacy_root = Path(".local-codex") / "skills"
         # Later roots override earlier ones, so project-specific workflows win.
-        return [package_root, user_root, workspace / "skills"]
+        return [package_root, legacy_root, user_root, workspace / "skills"]
 
     def reload(self) -> None:
         discovered: dict[str, Skill] = {}

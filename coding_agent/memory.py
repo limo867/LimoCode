@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -18,13 +18,26 @@ class MemoryItem:
     source: str
 
 
+@dataclass(frozen=True)
+class MemoryMatch:
+    """One durable memory selected for a task, with retrieval diagnostics."""
+
+    item: MemoryItem
+    score: int
+    matched_terms: tuple[str, ...]
+    truncated: bool = False
+
+
 class MemoryStore:
     """Stores durable project constraints separately from task and event history."""
 
-    _LONG_TERM_MARKERS = (
-        "always", "never", "must", "must not", "do not", "project uses", "project use",
-        "以后", "统一", "必须", "不要", "项目使用", "项目统一", "约定", "规则",
+    # Saving durable facts must be intentional. Broad words such as "must"
+    # occur in ordinary one-off tasks and otherwise pollute project memory.
+    _EXPLICIT_MEMORY_MARKERS = (
+        "remember", "remember:", "remember this", "please remember",
+        "\u8bb0\u4f4f", "\u957f\u671f\u8bb0\u5fc6", "\u4fdd\u5b58\u5230\u8bb0\u5fc6",
     )
+    _MAX_RETRIEVAL_SCAN = 500
 
     def __init__(self, path: Path | None):
         self.path = path
@@ -46,6 +59,32 @@ class MemoryStore:
 
     def list(self, limit: int = 50) -> list[MemoryItem]:
         return self._query("SELECT id, content, created_at, source FROM memories ORDER BY id DESC LIMIT ?", (max(1, limit),))
+
+    def status(self) -> dict[str, object]:
+        """Return storage health without exposing the SQLite connection."""
+        if not self._connection:
+            return {
+                "available": False,
+                "path": str(self.path) if self.path else None,
+                "count": 0,
+                "error": self.error or "memory storage is disabled",
+            }
+        with self._lock:
+            try:
+                row = self._connection.execute("SELECT COUNT(*) FROM memories").fetchone()
+            except sqlite3.Error as exc:
+                return {
+                    "available": False,
+                    "path": str(self.path) if self.path else None,
+                    "count": 0,
+                    "error": f"memory read failed: {exc}",
+                }
+        return {
+            "available": True,
+            "path": str(self.path) if self.path else None,
+            "count": int(row[0]) if row else 0,
+            "error": None,
+        }
 
     def add(self, content: str, source: str = "manual") -> MemoryItem:
         text = content.strip()
@@ -71,17 +110,47 @@ class MemoryStore:
         return MemoryItem(*row)
 
     def search(self, query: str, limit: int = 8) -> list[MemoryItem]:
+        return [match.item for match in self.retrieve_matches(query, limit=limit)]
+
+    def retrieve(self, task: str, limit: int = 6) -> list[MemoryItem]:
+        return [match.item for match in self.retrieve_matches(task, limit=limit)]
+
+    def retrieve_matches(self, query: str, limit: int = 6, max_chars: int | None = None) -> list[MemoryMatch]:
+        """Rank relevant memories and keep their combined prompt footprint bounded."""
         terms = self._terms(query)
         if not terms:
             return []
-        where = " OR ".join("LOWER(content) LIKE ?" for _ in terms)
-        parameters = tuple(f"%{term.lower()}%" for term in terms) + (max(1, limit),)
-        return self._query(
-            f"SELECT id, content, created_at, source FROM memories WHERE {where} ORDER BY id DESC LIMIT ?", parameters
-        )
+        ranked: list[MemoryMatch] = []
+        for item in self.list(self._MAX_RETRIEVAL_SCAN):
+            matched_terms = tuple(term for term in terms if term.lower() in item.content.lower())
+            if not matched_terms:
+                continue
+            score = self._score_match(query, item.content, matched_terms)
+            ranked.append(MemoryMatch(item=item, score=score, matched_terms=matched_terms))
+        ranked.sort(key=lambda match: (-match.score, -match.item.id))
 
-    def retrieve(self, task: str, limit: int = 6) -> list[MemoryItem]:
-        return self.search(task, limit)
+        selected: list[MemoryMatch] = []
+        remaining = max_chars if max_chars is not None else None
+        for match in ranked:
+            if len(selected) >= max(1, limit):
+                break
+            if remaining is None:
+                selected.append(match)
+                continue
+            if remaining <= 0:
+                break
+            content_length = len(match.item.content)
+            if content_length <= remaining:
+                selected.append(match)
+                remaining -= content_length
+                continue
+            # Keep a useful prefix when the best match alone exceeds the
+            # budget. Never let a single memory consume the entire prompt.
+            if not selected and remaining >= 80:
+                clipped = match.item.content[: max(0, remaining - 16)].rstrip() + "\n[truncated]"
+                selected.append(replace(match, item=replace(match.item, content=clipped), truncated=True))
+            break
+        return selected
 
     def delete(self, item_id: int) -> bool:
         connection = self._require_connection()
@@ -94,13 +163,13 @@ class MemoryStore:
                 raise OSError(f"memory delete failed: {exc}") from exc
 
     def extract_from_task(self, task: str) -> list[MemoryItem]:
-        """Persist explicit stable project rules, not transient work or tool output."""
-        candidates = re.split(r"[\n。！？.!?]+", task)
+        """Persist only user-explicit memory requests, never generic task constraints."""
+        candidates = re.split(r"[\n.!?\u3002\uff01\uff1f]+", task)
         saved: list[MemoryItem] = []
         for candidate in candidates:
             text = candidate.strip(" -\t")
             lower = text.lower()
-            if 8 <= len(text) <= 500 and any(marker in lower for marker in self._LONG_TERM_MARKERS):
+            if 8 <= len(text) <= 500 and any(marker in lower for marker in self._EXPLICIT_MEMORY_MARKERS):
                 try:
                     saved.append(self.add(text, source="automatic"))
                 except (OSError, ValueError):
@@ -135,3 +204,16 @@ class MemoryStore:
             if all("\u4e00" <= char <= "\u9fff" for char in term):
                 terms.extend(term[index : index + 2] for index in range(len(term) - 1))
         return list(dict.fromkeys(terms))
+
+    @staticmethod
+    def _score_match(query: str, content: str, matched_terms: tuple[str, ...]) -> int:
+        """A deterministic lexical score suitable for a small local memory DB."""
+        lowered_content = content.lower()
+        lowered_query = query.strip().lower()
+        score = 0
+        for term in matched_terms:
+            occurrences = lowered_content.count(term.lower())
+            score += min(occurrences, 3) * (6 if len(term) >= 4 else 3)
+        if len(lowered_query) >= 8 and lowered_query in lowered_content:
+            score += 24
+        return score

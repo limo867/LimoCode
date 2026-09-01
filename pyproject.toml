@@ -3,16 +3,19 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "local-codex-agent"
+name = "limocode-agent"
 version = "0.1.0"
 description = "A terminal-first local coding agent"
 requires-python = ">=3.10"
+dependencies = ["prompt_toolkit>=3.0,<4"]
 
 [project.scripts]
+limocode = "coding_agent.tui:main"
+# Backward-compatible alias for existing installations.
 local-codex = "coding_agent.tui:main"
 
 [tool.setuptools]
 packages = ["coding_agent"]
 
 [tool.setuptools.package-data]
-coding_agent = ["default_skills/*/SKILL.md"]
+coding_agent = ["default_skills/*/SKILL.md", "prompts/*.md"]

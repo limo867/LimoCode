@@ -33,6 +33,32 @@ class ContextManager:
         serialized = json.dumps(messages, ensure_ascii=False, default=str, separators=(",", ":"))
         return max(1, math.ceil(len(serialized) / 3.5) + len(messages) * 4)
 
+    def status(self, messages: list[dict[str, Any]]) -> dict[str, int | float | bool]:
+        """Expose the current short-term-memory budget for interfaces and diagnostics."""
+        summary = next(
+            (
+                message.get("content", "")
+                for message in messages
+                if message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+                and (
+                    "## Conversation Context" in message["content"]
+                    # Keep sessions written by older releases inspectable.
+                    or "## Compacted Task Context" in message["content"]
+                )
+            ),
+            "",
+        )
+        return {
+            "message_count": len(messages),
+            "estimated_tokens": self.estimate_tokens(messages) if messages else 0,
+            "max_tokens": self.max_tokens,
+            "threshold_tokens": int(self.max_tokens * self.threshold),
+            "threshold": self.threshold,
+            "has_summary": bool(summary),
+            "summary_chars": len(summary) if isinstance(summary, str) else 0,
+        }
+
     def compact(self, messages: list[dict[str, Any]], task: str, *, force: bool = False) -> CompactionResult:
         before = self.estimate_tokens(messages)
         history_limit_hit = len(messages) > 2 + self.max_history_messages
@@ -102,7 +128,11 @@ class ContextManager:
                 files.update(re.findall(r"\b[\w./-]+\.(?:py|md|txt|json|yaml|yml|js|ts|java)\b", content))
                 if any(marker in content.lower() for marker in ("must", "never", "do not", "should", "必须", "不要", "统一")):
                     decisions.append(content[:240])
-        sections = ["## Compacted Task Context", "## Task", task[:800]]
+        # The message list belongs to the whole continued conversation.  A
+        # task is one submitted turn, so call the persisted summary what it
+        # actually represents.  ``status`` continues to recognise the old
+        # heading for sessions created before this change.
+        sections = ["## Conversation Context", "## Goal", task[:800]]
         if not minimal:
             sections += [
                 "## Progress",

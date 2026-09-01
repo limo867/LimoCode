@@ -37,19 +37,28 @@ class Config:
     model: str = "gpt-4o-mini"
     base_url: str = "https://api.openai.com/v1"
     api_key: str | None = None
+    # Optional explicit HTTP(S) proxy for model traffic. Leave empty to use
+    # urllib's normal environment/system proxy discovery.
+    llm_proxy: str | None = None
     model_timeout: int = 60
     model_retries: int = 1
     model_retry_base_delay_ms: int = 250
     model_min_request_interval_ms: int = 0
-    max_turns: int = 12
+    # A coding task may need several inspect/edit/test/recover cycles. Keep a
+    # finite ceiling, but make the default large enough for multi-file work.
+    max_turns: int = 60
     command_timeout: int = 30
     command_approval_timeout: int = 120
+    # Workspace file changes are deliberately opt-in.  The UI may switch this
+    # setting, but model output and tool calls cannot change it.
+    permission_mode: str = "approval"
     max_output_chars: int = 12000
     max_file_chars: int = 200000
     max_history_messages: int = 30
     max_history_chars: int = 8000
     max_context_tokens: int = 128000
     compaction_threshold: float = 0.8
+    memory_context_chars: int = 4000
     available_models: tuple[str, ...] = ()
     history_db: Path | None = None
     memory_db: Path | None = None
@@ -65,6 +74,7 @@ class Config:
         command_timeout: int | None = None,
         command_approval_timeout: int | None = None,
         model_min_request_interval_ms: int | None = None,
+        permission_mode: str | None = None,
     ) -> "Config":
         """Apply optional CLI/UI overrides while preserving environment defaults."""
         values = {
@@ -75,6 +85,7 @@ class Config:
             "command_timeout": command_timeout,
             "command_approval_timeout": command_approval_timeout,
             "model_min_request_interval_ms": model_min_request_interval_ms,
+            "permission_mode": permission_mode,
         }
         return replace(self, **{key: value for key, value in values.items() if value is not None})
 
@@ -82,10 +93,14 @@ class Config:
     def from_env(cls, workspace: str | None = None) -> "Config":
         initial_root = Path(workspace or os.getenv("AGENT_WORKSPACE", os.getcwd())).expanduser().resolve()
         try:
-            user_dotenv_path = Path.home() / ".local-codex" / ".env"
+            user_root = Path.home()
         except RuntimeError:
-            user_dotenv_path = None
-        global_dotenv = _dotenv_values(user_dotenv_path) if user_dotenv_path else {}
+            user_root = None
+        # LimoCode owns the new location; merge the former location as a
+        # compatibility source so existing API keys continue to work.
+        legacy_dotenv = _dotenv_values(user_root / ".local-codex" / ".env") if user_root else {}
+        current_dotenv = _dotenv_values(user_root / ".limocode" / ".env") if user_root else {}
+        global_dotenv = {**legacy_dotenv, **current_dotenv}
         workspace_dotenv = _dotenv_values(initial_root / ".env")
 
         def get(name: str, default: str | None = None) -> str | None:
@@ -101,19 +116,22 @@ class Config:
             model=get("LLM_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
             base_url=(get("LLM_BASE_URL", "https://api.openai.com/v1") or "https://api.openai.com/v1").rstrip("/"),
             api_key=get("LLM_API_KEY"),
+            llm_proxy=get("LLM_PROXY") or None,
             model_timeout=int(get("LLM_TIMEOUT", "60") or "60"),
             model_retries=int(get("LLM_RETRIES", "1") or "1"),
             model_retry_base_delay_ms=int(get("LLM_RETRY_BASE_DELAY_MS", "250") or "250"),
             model_min_request_interval_ms=int(get("LLM_MIN_REQUEST_INTERVAL_MS", "0") or "0"),
-            max_turns=int(get("AGENT_MAX_TURNS", "12") or "12"),
+            max_turns=int(get("AGENT_MAX_TURNS", "60") or "60"),
             command_timeout=int(get("AGENT_COMMAND_TIMEOUT", "30") or "30"),
             command_approval_timeout=int(get("AGENT_COMMAND_APPROVAL_TIMEOUT", "120") or "120"),
+            permission_mode=(get("AGENT_PERMISSION_MODE", "approval") or "approval").strip().lower(),
             max_output_chars=int(get("AGENT_MAX_OUTPUT_CHARS", "12000") or "12000"),
             max_file_chars=int(get("AGENT_MAX_FILE_CHARS", "200000") or "200000"),
             max_history_messages=int(get("AGENT_MAX_HISTORY_MESSAGES", "30") or "30"),
             max_history_chars=int(get("AGENT_MAX_HISTORY_CHARS", "8000") or "8000"),
             max_context_tokens=int(get("AGENT_MAX_CONTEXT_TOKENS", "128000") or "128000"),
             compaction_threshold=float(get("AGENT_COMPACTION_THRESHOLD", "0.8") or "0.8"),
+            memory_context_chars=int(get("AGENT_MEMORY_CONTEXT_CHARS", "4000") or "4000"),
             available_models=tuple(item.strip() for item in (get("LLM_MODELS", "") or "").split(",") if item.strip()),
             history_db=history_db,
             memory_db=memory_db,

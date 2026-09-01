@@ -26,7 +26,12 @@ def main() -> None:
         command_approval_timeout=args.approval_timeout,
         model_min_request_interval_ms=args.min_request_interval,
     )
-    server = serve(config, args.host, args.port, demo=args.demo)
+    try:
+        server = serve(config, args.host, args.port, demo=args.demo)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 10048 or getattr(exc, "errno", None) in {98, 48}:
+            parser.error(f"port {args.port} is already used by another LimoCode service; stop it or choose another port")
+        raise
     try:
         server.serve_forever()
     except KeyboardInterrupt:

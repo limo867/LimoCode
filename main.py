@@ -5,6 +5,7 @@ from pathlib import Path
 from coding_agent import Agent, Config
 from coding_agent.agent import DemoModel
 from coding_agent.llm_client import LLMConfigurationError, OpenAICompatibleClient
+from coding_agent.memory import MemoryStore
 
 
 def main() -> None:
@@ -37,11 +38,26 @@ def main() -> None:
             model = OpenAICompatibleClient(config)
         except LLMConfigurationError as exc:
             parser.error(f"{exc}; set LLM_API_KEY or pass --demo")
-    agent = Agent(config, model=model)
-    result = agent.run(task)
-    print(result)
-    if args.log_file:
-        Path(args.log_file).write_text(json.dumps({"status": agent.last_status, "operations": agent.execution_log}, ensure_ascii=False, indent=2), encoding="utf-8")
+    memory_store = MemoryStore(config.memory_db)
+    try:
+        agent = Agent(config, model=model, memory_store=memory_store)
+        result = agent.run(task)
+        print(result)
+        if args.log_file:
+            Path(args.log_file).write_text(
+                json.dumps(
+                    {
+                        "status": agent.last_status,
+                        "operations": agent.execution_log,
+                        "memory": memory_store.status(),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+    finally:
+        memory_store.close()
 
 
 if __name__ == "__main__":
