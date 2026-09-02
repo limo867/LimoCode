@@ -992,8 +992,13 @@ class AgentService:
                 # a bounded safety gate: a rejected review gets one correction
                 # pass with concrete findings, rather than silently accepting
                 # a plausible but incorrect answer.
+                # A final Reviewer is meaningful for programming work, but a
+                # greeting or ordinary question should not incur another full
+                # model request before its first reply becomes visible.
+                needs_final_review = self._should_auto_explore(record.task) or self._has_code_changes(agent)
                 if (
                     isinstance(model, OpenAICompatibleClient)
+                    and needs_final_review
                     and not record.cancelled.is_set()
                     and agent.last_status == "completed"
                 ):
@@ -1047,7 +1052,6 @@ class AgentService:
                                     final_review.get("summary") or final_review.get("error") or "请检查审查结论。"
                                 )
                                 agent.last_status = "failed"
-            self._generate_conversation_title(record, model)
             if record.cancelled.is_set() or agent.last_status == "cancelled":
                 with self._lock:
                     record.transition("cancelled")
@@ -1066,6 +1070,16 @@ class AgentService:
                 if self.store:
                     self.store.save_task(record.snapshot())
                 self._trim_tasks_locked()
+            # Title generation is cosmetic. It must not keep the task in
+            # "running" after the user-facing answer is ready, especially
+            # for a first short message such as a greeting.
+            if record.status in {"completed", "failed", "cancelled"}:
+                Thread(
+                    target=self._generate_conversation_title,
+                    args=(record, model),
+                    name=f"title-{record.id[:8]}",
+                    daemon=True,
+                ).start()
         except Exception as exc:
             with self._lock:
                 if record.status in {"queued", "running"}:
@@ -1131,13 +1145,13 @@ class AgentService:
             (
                 "实现分析",
                 "请分析此用户请求涉及的实现。定位相关源码、入口、依赖、当前行为与约束。"
-                "不要修改文件，使用中文报告文件路径和建议。\n\n"
+                "不要修改文件；优先定位最相关的少数文件，避免重复读取，确认关键信息后立即用中文报告文件路径和建议。\n\n"
                 f"用户请求：{parent.task}",
             ),
             (
                 "验证分析",
                 "请分析此用户请求的验证路径。定位现有测试、构建配置、可安全执行的编译或测试命令，"
-                "并指出可能的边界风险。不要修改文件，使用中文报告。\n\n"
+                "并指出可能的边界风险。不要修改文件；优先检查最相关的少数配置和测试文件，确认后立即用中文报告。\n\n"
                 f"用户请求：{parent.task}",
             ),
         )
@@ -1147,7 +1161,7 @@ class AgentService:
             assignments = assignments[:1]
         with ThreadPoolExecutor(max_workers=len(assignments), thread_name_prefix="explorer") as pool:
             futures = [
-                pool.submit(self._run_subagent, parent, model, "explorer", assignment, reserved=True, max_turns=3)
+                pool.submit(self._run_subagent, parent, model, "explorer", assignment, reserved=True, max_turns=8)
                 for _label, assignment in assignments
             ]
             reports = [future.result() for future in futures]

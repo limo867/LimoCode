@@ -629,7 +629,11 @@ def event_summary(event: AgentEvent) -> str:
     if event.type == "subagent_finished":
         role = data.get("role", "specialist")
         status = data.get("status", "completed")
-        return f"[agent] {role} {status}: {textwrap.shorten(str(data.get('summary', '')), width=160, placeholder='...')}"
+        operations = data.get("operations")
+        duration = data.get("duration_ms")
+        operation_text = f" · {operations} operations" if isinstance(operations, int) else ""
+        duration_text = f" · {format_duration(float(duration) / 1000)}" if isinstance(duration, (int, float)) and duration else ""
+        return f"[agent] {role} {status}{operation_text}{duration_text}"
     if event.type == "model_retrying":
         return f"[retry] model request in {data.get('delay_ms', '?')} ms"
     if event.type == "model_rate_limited":
@@ -2020,7 +2024,6 @@ class TerminalApp:
         duration = format_duration(view.duration_seconds)
         handler = self._pt_activity_mouse_handler(view.task_id)
         pending = view.status in {"queued", "running"} or any(operation.ok is None for operation in view.operations)
-        failed_operations = sum(operation.ok is False for operation in view.operations)
         if view.status == "failed":
             icon, style, state_prefix = "✕", "class:error", "Task failed · "
         elif view.status == "cancelled":
@@ -2028,8 +2031,6 @@ class TerminalApp:
         elif pending:
             icon = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")[int(time.monotonic() * 8) % 10]
             style, state_prefix = "class:thinking", "Working · "
-        elif failed_operations:
-            icon, style, state_prefix = "!", "class:warning", f"{failed_operations} operation{'s' if failed_operations != 1 else ''} failed · "
         else:
             icon, style, state_prefix = "●", "class:success", ""
         label = state_prefix + label
@@ -2057,19 +2058,14 @@ class TerminalApp:
                 style = "class:thinking" if status == "running" else "class:success" if status == "completed" else "class:error"
                 duration = specialist.get("duration_ms")
                 detail = f" · {format_duration(float(duration) / 1000)}" if isinstance(duration, (int, float)) and duration else ""
+                operations = specialist.get("operations")
+                operation_detail = f" · {operations} operations" if isinstance(operations, int) else ""
                 fragments.append((style, f"      {marker} "))
-                fragments.append(("class:activity.label", f"{role} · {status}{detail}\n"))
-                summary = str(specialist.get("error") or specialist.get("summary") or "").replace("\n", " ").strip()
-                if summary:
-                    fragments.append(("class:activity", f"        {textwrap.shorten(summary, width=120, placeholder='...')}\n"))
+                fragments.append(("class:activity.label", f"{role} · {status}{detail}{operation_detail}\n"))
         if view.review_verdict:
             review_style = "class:success" if view.review_verdict == "pass" else "class:error"
             review_label = "审查员已确认结果符合请求" if view.review_verdict == "pass" else "审查员未通过，主 Agent 正在修正"
             fragments.append((review_style, f"    {'✓' if view.review_verdict == 'pass' else '!'} {review_label}\n"))
-            review_text = view.review_summary.replace("\n", " ").strip()
-            review_text = re.sub(r"^VERDICT:\s*(PASS|REJECT)\s*", "", review_text, flags=re.IGNORECASE)
-            if review_text:
-                fragments.append(("class:activity", f"      {textwrap.shorten(review_text, width=120, placeholder='...')}\n"))
         for index, operation in enumerate(view.operations):
             marker = "✓" if operation.ok else "✕" if operation.ok is False else "●"
             style = "class:success" if operation.ok else "class:error" if operation.ok is False else "class:activity"
