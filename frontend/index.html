@@ -421,7 +421,7 @@
     .task-divider span { white-space: nowrap; }
 
     .composer-wrap { padding: 0 clamp(18px, 4vw, 64px) 19px; background: var(--canvas); }
-    .composer { position: relative; width: min(850px, 100%); margin: 0 auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 10px 28px rgba(0, 0, 0, .14); overflow: hidden; }
+    .composer { position: relative; width: min(850px, 100%); margin: 0 auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 10px 28px rgba(0, 0, 0, .14); overflow: visible; }
     .composer:focus-within { border-color: #78927e; box-shadow: 0 0 0 3px rgba(126, 201, 148, .11), 0 12px 30px rgba(0, 0, 0, .18); }
     .composer textarea { display: block; width: 100%; min-height: 78px; max-height: 230px; resize: vertical; padding: 15px 16px 10px; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.65; }
     .composer textarea::placeholder { color: var(--faint); }
@@ -721,6 +721,13 @@
     .slash-option:hover, .slash-option.selected { background: #eef4ff; }
     .slash-command { color: #2858ab; }
     .slash-description { color: var(--muted); }
+    .slash-menu { position: absolute; z-index: 20; left: 0; bottom: calc(100% + 9px); width: min(430px, 100%); max-height: min(360px, 48dvh); overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 14px 34px rgba(30,48,70,.16); pointer-events: auto; }
+    .slash-menu[hidden] { display: none; }
+    .slash-option { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; width: 100%; padding: 8px 9px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+    .slash-option-icon { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #d7e1ef; border-radius: 6px; color: var(--blue); font: 12px var(--mono); }
+    .slash-option-copy { min-width: 0; display: grid; gap: 1px; }
+    .slash-command { font: 11px var(--mono); font-weight: 700; }
+    .slash-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 
     .inspector-head { padding: 0 17px; border-color: var(--line-soft); }
     .inspector-title { color: #273449; font-size: 13px; }
@@ -930,6 +937,7 @@
 
       <div class="composer-wrap">
         <form class="composer" id="composer" novalidate>
+          <div class="slash-menu" id="slash-menu" hidden role="listbox" aria-label="快捷命令"></div>
           <textarea id="task-input" rows="2" placeholder="描述一个编程任务" aria-label="编程任务"></textarea>
           <div class="composer-footer">
             <div class="composer-tools" aria-label="任务选项">
@@ -1090,6 +1098,7 @@
         selectedFilePath: null,
         filePreview: { path: null, loading: false, error: "", data: null },
         workspaceView: "sessions",
+        slashSelection: 0,
         timer: null,
       };
 
@@ -1100,7 +1109,7 @@
         workspaceTabFiles: $("#workspace-tab-files"), workspaceTabSessions: $("#workspace-tab-sessions"), workspaceSessions: $("#workspace-sessions"),
         conversations: $("#conversation-list"), title: $("#conversation-title"), subtitle: $("#conversation-subtitle"),
         taskDot: $("#task-dot"), taskState: $("#task-state"), transcript: $("#transcript"), transcriptInner: $("#transcript-inner"),
-        input: $("#task-input"), composer: $("#composer"), send: $("#send-task"), cancel: $("#cancel-task"), openSkills: $("#open-skills"),
+        input: $("#task-input"), composer: $("#composer"), slashMenu: $("#slash-menu"), send: $("#send-task"), cancel: $("#cancel-task"), openSkills: $("#open-skills"),
         permissionMode: $("#permission-mode"), changes: $("#changes-list"), activity: $("#activity-list"), memorySearch: $("#memory-search"), memoryAdd: $("#memory-add"), memoryList: $("#memory-list"),
         skillsList: $("#skills-list"), skillsAuto: $("#skills-auto"), skillsManual: $("#skills-manual"),
         contextMetrics: $("#context-metrics"), contextMeter: $("#context-meter"), contextNote: $("#context-note"), compact: $("#compact-context"),
@@ -1108,6 +1117,16 @@
         trustModal: $("#trust-modal"), trustPath: $("#trust-workspace-path"), trustStore: $("#trust-store-info"), trustStorePath: $("#trust-store-path"), trustDiagnostic: $("#trust-diagnostic"), trustConfirm: $("#trust-confirm"), toasts: $("#toast-region"),
         workspaceModal: $("#workspace-modal"), workspaceSelectedPath: $("#workspace-selected-path"), workspaceChooseDirectory: $("#choose-workspace-directory"), workspaceStatus: $("#workspace-picker-status"), workspaceOptions: $("#workspace-options"), workspaceStart: $("#start-workspace-conversation"), workspaceTrust: $("#trust-selected-workspace"),
       };
+
+      const slashCommands = [
+        { command: "/settings", panel: "settings", icon: "⚙", label: "运行设置", description: "查看模型、超时和服务限制" },
+        { command: "/changes", panel: "changes", icon: "±", label: "文件变更", description: "查看 Diff、审批状态和撤销入口" },
+        { command: "/activity", panel: "activity", icon: "▷", label: "任务活动", description: "查看工具调用和 Subagent 状态" },
+        { command: "/memory", panel: "memory", icon: "◇", label: "长期记忆", description: "搜索、保存或删除项目记忆" },
+        { command: "/skills", panel: "skills", icon: "✦", label: "技能", description: "配置下一项任务使用的技能" },
+        { command: "/context", panel: "context", icon: "≡", label: "会话上下文", description: "查看上下文占用并执行压缩" },
+        { command: "/compact", action: "compact", icon: "⇥", label: "压缩上下文", description: "立即压缩当前会话的短期上下文" },
+      ];
 
       function createWorkspacePathEntry() {
         // Avoid an OS file-picker dependency. The existing inspection and
@@ -2701,6 +2720,7 @@
       async function submitTask(text) {
         const value = String(text || "").trim();
         if (!value) return;
+        if (executeTypedSlashCommand()) return;
         const workspace = currentWorkspacePath();
         const workspaceDetails = currentWorkspaceDetails();
         if (!workspace) { openWorkspacePicker(); return; }
@@ -2890,7 +2910,9 @@
         catch (error) { console.warn("Could not load context", error); }
       }
       async function compactConversation() {
-        if (!state.activeConversationId) return;
+        if (!state.activeConversationId) { toast("请先打开或新建一个会话", "warn"); return; }
+        const task = activeTask();
+        if (task && ACTIVE.has(task.status)) { toast("当前任务完成后才能压缩会话", "warn"); return; }
         els.compact.disabled = true; els.compact.textContent = "正在压缩...";
         try {
           const result = await api(`/api/conversations/${encodeURIComponent(state.activeConversationId)}/compact`, { method: "POST", body: {} });
@@ -2912,6 +2934,74 @@
       function closeHeaderMenu() { els.headerMenu.hidden = true; }
       function openInspector(name = "changes") { closeHeaderMenu(); switchPanel(name); els.inspector.classList.add("drawer-open"); els.scrim.classList.add("visible"); }
       function closeDrawers() { closeHeaderMenu(); els.sidebar.classList.remove("drawer-open"); els.inspector.classList.remove("drawer-open"); els.scrim.classList.remove("visible"); }
+
+      function matchingSlashCommands() {
+        const value = els.input.value.trim().toLowerCase();
+        if (!value.startsWith("/") || /\s/.test(value)) return [];
+        return slashCommands.filter(item => item.command.startsWith(value));
+      }
+
+      function closeSlashMenu() {
+        els.slashMenu.hidden = true;
+        els.slashMenu.replaceChildren();
+        state.slashSelection = 0;
+        els.input.removeAttribute("aria-activedescendant");
+      }
+
+      function renderSlashMenu() {
+        const options = matchingSlashCommands();
+        if (!options.length) { closeSlashMenu(); return; }
+        state.slashSelection = Math.max(0, Math.min(state.slashSelection, options.length - 1));
+        els.slashMenu.replaceChildren();
+        options.forEach((item, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.id = `slash-option-${index}`;
+          button.className = `slash-option${index === state.slashSelection ? " selected" : ""}`;
+          button.setAttribute("role", "option");
+          button.setAttribute("aria-selected", String(index === state.slashSelection));
+          button.innerHTML = `<span class="slash-option-icon" aria-hidden="true">${item.icon}</span><span class="slash-option-copy"><span><span class="slash-command">${item.command}</span> · ${item.label}</span><span class="slash-description">${item.description}</span></span>`;
+          button.addEventListener("mouseenter", () => { state.slashSelection = index; renderSlashMenu(); });
+          let activated = false;
+          const activate = event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (activated) return;
+            activated = true;
+            executeSlashCommand(item);
+          };
+          // Execute before the textarea loses focus; click remains available
+          // for keyboard activation and browsers without Pointer Events.
+          button.addEventListener("pointerdown", activate);
+          button.addEventListener("click", activate);
+          els.slashMenu.append(button);
+        });
+        els.slashMenu.hidden = false;
+        els.input.setAttribute("aria-activedescendant", `slash-option-${state.slashSelection}`);
+        const selected = els.slashMenu.children[state.slashSelection];
+        if (selected) selected.scrollIntoView({ block: "nearest" });
+      }
+
+      function executeSlashCommand(item) {
+        if (!item) return false;
+        els.input.value = "";
+        autoResize();
+        closeSlashMenu();
+        if (item.action === "compact") compactConversation();
+        else openInspector(item.panel);
+        return true;
+      }
+
+      function executeTypedSlashCommand() {
+        const value = els.input.value.trim().toLowerCase();
+        const exact = slashCommands.find(item => item.command === value);
+        if (exact) return executeSlashCommand(exact);
+        if (value.startsWith("/")) {
+          toast(`未知命令：${els.input.value.trim()}`, "warn");
+          return true;
+        }
+        return false;
+      }
 
       function autoResize() { els.input.style.height = "auto"; els.input.style.height = `${Math.min(210, Math.max(62, els.input.scrollHeight))}px`; }
       function updateTimer() { state.activity.forEach((_, id) => updateActivityHeader(id)); setHeader(); }
@@ -2999,9 +3089,20 @@
       $("#trust-later").addEventListener("click", () => { state.trustedDismissed = true; state.trustPromptRequested = false; updateTrustUI(); toast("Tasks remain disabled until this workspace is trusted.", "warn"); });
       els.composer.addEventListener("submit", event => { event.preventDefault(); submitTask(els.input.value); });
       els.cancel.addEventListener("click", cancelTask);
-      els.input.addEventListener("input", () => { autoResize(); });
+      els.input.addEventListener("input", () => { state.slashSelection = 0; autoResize(); renderSlashMenu(); });
       els.input.addEventListener("keydown", event => {
         if (event.key === "Escape" && activeTask()) { event.preventDefault(); cancelTask(); return; }
+        const options = matchingSlashCommands();
+        if (options.length && event.key === "ArrowDown") {
+          event.preventDefault(); state.slashSelection = (state.slashSelection + 1) % options.length; renderSlashMenu(); return;
+        }
+        if (options.length && event.key === "ArrowUp") {
+          event.preventDefault(); state.slashSelection = (state.slashSelection - 1 + options.length) % options.length; renderSlashMenu(); return;
+        }
+        if (options.length && event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault(); executeSlashCommand(options[state.slashSelection]); return;
+        }
+        if (event.key === "Escape" && !els.slashMenu.hidden) { event.preventDefault(); closeSlashMenu(); return; }
         if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); els.composer.requestSubmit(); }
       });
       els.modelSelect.addEventListener("change", () => selectModel(els.modelSelect.value));
